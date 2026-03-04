@@ -11,9 +11,6 @@ if [ -n "${DATABASE_PATH:-}" ]; then
   mkdir -p "$(dirname "$DATABASE_PATH")"
 fi
 
-mix local.hex --force
-mix local.rebar --force
-
 mix deps.get --only "$MIX_ENV"
 mix deps.compile
 mix compile

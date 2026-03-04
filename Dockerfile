@@ -4,11 +4,13 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends build-essential git sqlite3 ca-certificates && \
     rm -rf /var/lib/apt/lists/*
 
+RUN mix local.hex --force && mix local.rebar --force
+
 WORKDIR /app
 
-ENV MIX_ENV=prod
-ENV PHX_SERVER=true
-ENV PORT=4000
-ENV DATABASE_PATH=/data/icarurss_prod.db
+ENV MIX_ENV=prod \
+    PHX_SERVER=true \
+    PORT=4000 \
+    DATABASE_PATH=/data/icarurss_prod.db
 
 EXPOSE 4000
