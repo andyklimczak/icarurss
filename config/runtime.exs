@@ -23,6 +23,14 @@ end
 config :icarurss, IcarurssWeb.Endpoint,
   http: [port: String.to_integer(System.get_env("PORT", "4000"))]
 
+registration_enabled =
+  case System.get_env("REGISTRATION_ENABLED", "false") |> String.downcase() do
+    value when value in ["1", "true", "yes", "on"] -> true
+    _ -> false
+  end
+
+config :icarurss, registration_enabled: registration_enabled
+
 if config_env() == :prod do
   database_path =
     System.get_env("DATABASE_PATH") ||

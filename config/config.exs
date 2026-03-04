@@ -7,9 +7,36 @@
 # General application configuration
 import Config
 
+config :icarurss, :scopes,
+  user: [
+    default: true,
+    module: Icarurss.Accounts.Scope,
+    assign_key: :current_scope,
+    access_path: [:user, :id],
+    schema_key: :user_id,
+    schema_type: :id,
+    schema_table: :users,
+    test_data_fixture: Icarurss.AccountsFixtures,
+    test_setup_helper: :register_and_log_in_user
+  ]
+
 config :icarurss,
   ecto_repos: [Icarurss.Repo],
-  generators: [timestamp_type: :utc_datetime]
+  generators: [timestamp_type: :utc_datetime],
+  registration_enabled: false,
+  feed_source: Icarurss.Reader.FeedSource.ReqSource
+
+config :icarurss, Oban,
+  repo: Icarurss.Repo,
+  engine: Oban.Engines.Lite,
+  plugins: [
+    {Oban.Plugins.Cron,
+     crontab: [
+       {"*/10 * * * *", Icarurss.Workers.RefreshAllFeedsWorker}
+     ]},
+    {Oban.Plugins.Pruner, max_age: 60 * 60 * 24 * 7}
+  ],
+  queues: [feed_refresh: 5]
 
 # Configure the endpoint
 config :icarurss, IcarurssWeb.Endpoint,

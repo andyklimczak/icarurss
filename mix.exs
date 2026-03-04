@@ -40,6 +40,7 @@ defmodule Icarurss.MixProject do
   # Type `mix help deps` for examples and options.
   defp deps do
     [
+      {:bcrypt_elixir, "~> 3.0"},
       {:phoenix, "~> 1.8.3"},
       {:phoenix_ecto, "~> 4.5"},
       {:ecto_sql, "~> 3.13"},
@@ -51,6 +52,8 @@ defmodule Icarurss.MixProject do
       {:phoenix_live_dashboard, "~> 0.8.3"},
       {:esbuild, "~> 0.10", runtime: Mix.env() == :dev},
       {:tailwind, "~> 0.3", runtime: Mix.env() == :dev},
+      {:oban, "~> 2.20"},
+      {:html_sanitize_ex, "~> 1.4"},
       {:heroicons,
        github: "tailwindlabs/heroicons",
        tag: "v2.2.0",

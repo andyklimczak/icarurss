@@ -12,6 +12,7 @@ defmodule Icarurss.Application do
       Icarurss.Repo,
       {Ecto.Migrator,
        repos: Application.fetch_env!(:icarurss, :ecto_repos), skip: skip_migrations?()},
+      {Oban, Application.fetch_env!(:icarurss, Oban)},
       {DNSCluster, query: Application.get_env(:icarurss, :dns_cluster_query) || :ignore},
       {Phoenix.PubSub, name: Icarurss.PubSub},
       # Start a worker by calling: Icarurss.Worker.start_link(arg)
