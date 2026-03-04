@@ -47,9 +47,18 @@ defmodule IcarurssWeb.Router do
     live_session :require_authenticated_user,
       on_mount: [{IcarurssWeb.UserAuth, :require_authenticated}] do
       live "/", ReaderLive, :index
-      live "/users/settings", UserLive.Settings, :edit
+      live "/users/settings", UserLive.Settings, :reader
+      live "/users/settings/reader", UserLive.Settings, :reader
+      live "/users/settings/opml", UserLive.Settings, :opml
+      live "/users/settings/feeds", UserLive.Settings, :opml
+      live "/users/settings/username", UserLive.Settings, :username
+      live "/users/settings/password", UserLive.Settings, :password
     end
 
+    get "/users/settings/opml/export", FeedSettingsController, :export_opml
+    post "/users/settings/opml/import", FeedSettingsController, :import_opml
+    get "/users/settings/feeds/export", FeedSettingsController, :export_opml
+    post "/users/settings/feeds/import", FeedSettingsController, :import_opml
     post "/users/update-password", UserSessionController, :update_password
   end
 

@@ -60,6 +60,71 @@ defmodule IcarurssWeb.ReaderLiveTest do
       assert has_element?(view, "#article-content")
     end
 
+    test "renders article timestamps in the user's configured timezone", %{conn: conn} do
+      user = user_fixture()
+      feed = feed_fixture(user)
+      {:ok, _setting} = Reader.update_reader_setting(user, %{"timezone" => "America/New_York"})
+
+      _article =
+        article_fixture(user, feed, %{
+          is_read: false,
+          published_at: ~U[2026-01-15 15:00:00Z]
+        })
+
+      {:ok, _view, html} =
+        conn
+        |> log_in_user(user)
+        |> live(~p"/")
+
+      assert html =~ "Jan 15, 2026 10:00 AM"
+    end
+
+    test "selecting a feed from unread keeps unread filter active", %{conn: conn} do
+      user = user_fixture()
+      feed = feed_fixture(user)
+      unread_article = article_fixture(user, feed, %{is_read: false})
+      read_article = article_fixture(user, feed, %{is_read: true})
+
+      {:ok, view, _html} =
+        conn
+        |> log_in_user(user)
+        |> live(~p"/")
+
+      view
+      |> element("#sidebar-feed-#{feed.id}")
+      |> render_click()
+
+      assert has_element?(view, "#articles-#{unread_article.id}")
+      refute has_element?(view, "#articles-#{read_article.id}")
+    end
+
+    test "selected unread article stays visible until another article is selected", %{conn: conn} do
+      user = user_fixture()
+      feed = feed_fixture(user)
+      first_article = article_fixture(user, feed, %{is_read: false})
+      second_article = article_fixture(user, feed, %{is_read: false})
+
+      {:ok, view, _html} =
+        conn
+        |> log_in_user(user)
+        |> live(~p"/")
+
+      view
+      |> element("#articles-#{first_article.id}")
+      |> render_click()
+
+      assert Reader.get_article_for_user!(user, first_article.id).is_read
+      assert has_element?(view, "#articles-#{first_article.id}")
+
+      view
+      |> element("#articles-#{second_article.id}")
+      |> render_click()
+
+      assert Reader.get_article_for_user!(user, second_article.id).is_read
+      refute has_element?(view, "#articles-#{first_article.id}")
+      assert has_element?(view, "#articles-#{second_article.id}")
+    end
+
     test "mark all read applies to currently selected feed", %{conn: conn} do
       user = user_fixture()
       feed_a = feed_fixture(user)
@@ -172,7 +237,7 @@ defmodule IcarurssWeb.ReaderLiveTest do
       assert render(view) =~ "Feed refresh queued"
     end
 
-    test "creates folders from the sidebar form", %{conn: conn} do
+    test "creates folders from the sidebar modal", %{conn: conn} do
       user = user_fixture()
 
       {:ok, view, _html} =
@@ -181,11 +246,152 @@ defmodule IcarurssWeb.ReaderLiveTest do
         |> live(~p"/")
 
       view
-      |> form("#new-folder-form", new_folder: %{name: "Podcasts"})
+      |> element("#open-new-folder-modal-button")
+      |> render_click()
+
+      view
+      |> form("#new-folder-modal-form", new_folder: %{name: "Podcasts"})
       |> render_submit()
 
       folders = Reader.list_folders(user)
       assert Enum.any?(folders, &(&1.name == "Podcasts"))
+    end
+
+    test "add feed modal can assign new feed into an existing folder", %{conn: conn} do
+      user = user_fixture()
+      folder = folder_fixture(user, %{name: "News"})
+
+      Application.put_env(
+        :icarurss,
+        :feed_source_fake_discover,
+        {:ok,
+         [
+           %{
+             feed_url: "https://news.example.com/feed.xml",
+             title: "News Feed",
+             site_url: "https://news.example.com",
+             base_url: "https://news.example.com",
+             favicon_url: "https://news.example.com/favicon.ico"
+           }
+         ]}
+      )
+
+      Application.put_env(
+        :icarurss,
+        :feed_source_fake_fetch_feed,
+        {:ok,
+         %{
+           title: "News Feed",
+           entries: [
+             %{
+               guid: "news-folder-1",
+               url: "https://news.example.com/a1",
+               title: "News One",
+               content_html: "<p>News one</p>",
+               published_at: DateTime.utc_now(:second)
+             }
+           ]
+         }}
+      )
+
+      {:ok, view, _html} =
+        conn
+        |> log_in_user(user)
+        |> live(~p"/")
+
+      view
+      |> element("#add-feed-button")
+      |> render_click()
+
+      view
+      |> form("#discover-feeds-form",
+        add_feed: %{url: "https://news.example.com", folder_id: folder.id}
+      )
+      |> render_submit()
+
+      view
+      |> element("#subscribe-feed-0")
+      |> render_click()
+
+      feed =
+        Enum.find(Reader.list_feeds(user), &(&1.feed_url == "https://news.example.com/feed.xml"))
+
+      assert feed.folder_id == folder.id
+    end
+
+    test "add feed modal can create a folder before subscribing", %{conn: conn} do
+      user = user_fixture()
+
+      Application.put_env(
+        :icarurss,
+        :feed_source_fake_discover,
+        {:ok,
+         [
+           %{
+             feed_url: "https://dev.example.com/feed.xml",
+             title: "Dev Feed",
+             site_url: "https://dev.example.com",
+             base_url: "https://dev.example.com",
+             favicon_url: "https://dev.example.com/favicon.ico"
+           }
+         ]}
+      )
+
+      Application.put_env(
+        :icarurss,
+        :feed_source_fake_fetch_feed,
+        {:ok,
+         %{
+           title: "Dev Feed",
+           entries: [
+             %{
+               guid: "dev-folder-1",
+               url: "https://dev.example.com/a1",
+               title: "Dev One",
+               content_html: "<p>Dev one</p>",
+               published_at: DateTime.utc_now(:second)
+             }
+           ]
+         }}
+      )
+
+      {:ok, view, _html} =
+        conn
+        |> log_in_user(user)
+        |> live(~p"/")
+
+      view
+      |> element("#add-feed-button")
+      |> render_click()
+
+      view
+      |> element("#open-add-feed-folder-modal-button")
+      |> render_click()
+
+      assert has_element?(view, "#add-feed-folder-modal")
+
+      view
+      |> form("#add-feed-folder-modal-form", add_feed_new_folder: %{name: "Engineering"})
+      |> render_submit()
+
+      folder = Enum.find(Reader.list_folders(user), &(&1.name == "Engineering"))
+      assert folder
+      refute has_element?(view, "#add-feed-folder-modal")
+
+      view
+      |> form("#discover-feeds-form",
+        add_feed: %{url: "https://dev.example.com", folder_id: folder.id}
+      )
+      |> render_submit()
+
+      view
+      |> element("#subscribe-feed-0")
+      |> render_click()
+
+      feed =
+        Enum.find(Reader.list_feeds(user), &(&1.feed_url == "https://dev.example.com/feed.xml"))
+
+      assert feed.folder_id == folder.id
     end
 
     test "moves a selected feed into a folder", %{conn: conn} do

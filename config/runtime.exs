@@ -36,7 +36,7 @@ if config_env() == :prod do
     System.get_env("DATABASE_PATH") ||
       raise """
       environment variable DATABASE_PATH is missing.
-      For example: /etc/icarurss/icarurss.db
+      For example: /etc/icarurss/data/icarurss_prod.db
       """
 
   config :icarurss, Icarurss.Repo,

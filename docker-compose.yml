@@ -1,0 +1,31 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: icarurss-local:latest
+    container_name: icarurss
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      MIX_ENV: ${MIX_ENV:-prod}
+      PORT: ${PORT:-4000}
+      PHX_SERVER: "true"
+      DATABASE_PATH: ${DATABASE_PATH:-/data/icarurss_prod.db}
+    ports:
+      - "${PORT:-4000}:4000"
+    volumes:
+      - ./:/app
+      - ./data:/data
+      - deps:/app/deps
+      - build:/app/_build
+      - hex:/root/.hex
+      - rebar3:/root/.cache/rebar3
+    command: ["sh", "-lc", "./docker/start.sh"]
+
+volumes:
+  deps:
+  build:
+  hex:
+  rebar3:

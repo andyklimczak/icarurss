@@ -1,6 +1,8 @@
 defmodule Icarurss.Reader.FeedParserTest do
   use ExUnit.Case, async: true
 
+  import ExUnit.CaptureLog
+
   alias Icarurss.Reader.FeedParser
 
   describe "parse/2" do
@@ -39,6 +41,26 @@ defmodule Icarurss.Reader.FeedParserTest do
       assert %DateTime{} = entry.published_at
     end
 
+    test "parses RSS feeds containing UTF-8 punctuation in text nodes" do
+      rss = """
+      <?xml version="1.0" encoding="UTF-8"?>
+      <rss version="2.0">
+        <channel>
+          <title>Unicode Feed</title>
+          <link>https://example.com</link>
+          <item>
+            <title>A – B</title>
+            <link>https://example.com/articles/1</link>
+          </item>
+        </channel>
+      </rss>
+      """
+
+      assert {:ok, payload} = FeedParser.parse(rss, feed_url: "https://example.com/feed.xml")
+      assert [entry] = payload.entries
+      assert entry.title == "A – B"
+    end
+
     test "parses Atom feeds with href links and updated timestamps" do
       atom = """
       <?xml version="1.0" encoding="utf-8"?>
@@ -72,8 +94,47 @@ defmodule Icarurss.Reader.FeedParserTest do
       assert %DateTime{} = entry.published_at
     end
 
+    test "parses RDF RSS feeds with root-level items" do
+      rdf = """
+      <?xml version="1.0" encoding="UTF-8"?>
+      <rdf:RDF
+        xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+        xmlns="http://purl.org/rss/1.0/"
+      >
+        <channel rdf:about="https://example.org/">
+          <title>RDF Example</title>
+          <link>https://example.org/</link>
+          <description>Example RSS 1.0 feed</description>
+        </channel>
+        <item rdf:about="https://example.org/posts/1">
+          <title>RDF Entry</title>
+          <link>https://example.org/posts/1</link>
+          <description>RDF summary</description>
+        </item>
+      </rdf:RDF>
+      """
+
+      assert {:ok, payload} = FeedParser.parse(rdf, feed_url: "https://example.org/feed.rdf")
+      assert payload.title == "RDF Example"
+      assert payload.site_url == "https://example.org/"
+      assert payload.base_url == "https://example.org"
+      assert [entry] = payload.entries
+      assert entry.title == "RDF Entry"
+      assert entry.url == "https://example.org/posts/1"
+      assert entry.summary_html == "RDF summary"
+    end
+
     test "returns an error for non-feed payloads" do
       assert {:error, _reason} = FeedParser.parse("<html><body>not a feed</body></html>")
+    end
+
+    test "returns an error instead of crashing on invalid XML characters" do
+      invalid_xml =
+        "<?xml version=\"1.0\"?><rss version=\"2.0\"><channel><title>Bad" <>
+          <<1>> <> "</title></channel></rss>"
+
+      log = capture_log(fn -> assert {:error, _reason} = FeedParser.parse(invalid_xml) end)
+      assert log =~ "fatal"
     end
   end
 end

@@ -2,13 +2,14 @@ defmodule Icarurss.Accounts.User do
   use Ecto.Schema
   import Ecto.Changeset
 
-  alias Icarurss.Reader.{Article, Feed, Folder}
+  alias Icarurss.Reader.{Article, Feed, Folder, Setting}
 
   schema "users" do
     field :username, :string
     field :email, :string
     field :role, Ecto.Enum, values: [:admin, :member], default: :member
     field :password, :string, virtual: true, redact: true
+    field :current_password, :string, virtual: true, redact: true
     field :hashed_password, :string, redact: true
     field :confirmed_at, :utc_datetime
     field :authenticated_at, :utc_datetime, virtual: true
@@ -16,6 +17,7 @@ defmodule Icarurss.Accounts.User do
     has_many :folders, Folder
     has_many :feeds, Feed
     has_many :articles, Article
+    has_one :reader_setting, Setting
 
     timestamps(type: :utc_datetime)
   end
@@ -37,6 +39,16 @@ defmodule Icarurss.Accounts.User do
     |> validate_email(opts)
     |> validate_username(opts, required?: false)
     |> validate_required([:role])
+  end
+
+  @doc """
+  A user changeset for changing username.
+  """
+  def username_changeset(user, attrs, opts \\ []) do
+    user
+    |> cast(attrs, [:username])
+    |> normalize_username()
+    |> validate_username(opts, required?: true)
   end
 
   @doc """
@@ -124,7 +136,8 @@ defmodule Icarurss.Accounts.User do
   """
   def password_changeset(user, attrs, opts \\ []) do
     user
-    |> cast(attrs, [:password])
+    |> cast(attrs, [:password, :current_password])
+    |> maybe_validate_current_password(user, opts)
     |> validate_confirmation(:password, message: "does not match password")
     |> validate_password(opts)
   end
@@ -154,6 +167,31 @@ defmodule Icarurss.Accounts.User do
       |> delete_change(:password)
     else
       changeset
+    end
+  end
+
+  defp maybe_validate_current_password(changeset, user, opts) do
+    if Keyword.get(opts, :require_current_password, false) do
+      changeset
+      |> validate_required([:current_password])
+      |> validate_current_password(user)
+    else
+      changeset
+    end
+  end
+
+  defp validate_current_password(changeset, user) do
+    current_password = get_change(changeset, :current_password)
+
+    cond do
+      not (is_binary(current_password) and current_password != "") ->
+        changeset
+
+      valid_password?(user, current_password) ->
+        changeset
+
+      true ->
+        add_error(changeset, :current_password, "is not valid")
     end
   end
 

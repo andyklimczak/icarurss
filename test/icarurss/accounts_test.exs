@@ -217,6 +217,13 @@ defmodule Icarurss.AccountsTest do
     end
   end
 
+  describe "change_user_username/3" do
+    test "returns a user changeset" do
+      assert %Ecto.Changeset{} = changeset = Accounts.change_user_username(%User{})
+      assert changeset.required == [:username]
+    end
+  end
+
   describe "deliver_user_update_email_instructions/3" do
     setup do
       %{user: user_fixture()}
@@ -353,6 +360,56 @@ defmodule Icarurss.AccountsTest do
         })
 
       refute Repo.get_by(UserToken, user_id: user.id)
+    end
+  end
+
+  describe "update_user_password/3 with current password requirement" do
+    setup do
+      %{user: user_fixture()}
+    end
+
+    test "requires current password", %{user: user} do
+      {:error, changeset} =
+        Accounts.update_user_password(
+          user,
+          %{password: "new valid password"},
+          require_current_password: true
+        )
+
+      assert %{current_password: ["can't be blank"]} = errors_on(changeset)
+    end
+
+    test "rejects wrong current password", %{user: user} do
+      {:error, changeset} =
+        Accounts.update_user_password(
+          user,
+          %{current_password: "wrong", password: "new valid password"},
+          require_current_password: true
+        )
+
+      assert %{current_password: ["is not valid"]} = errors_on(changeset)
+    end
+
+    test "updates password with correct current password", %{user: user} do
+      {:ok, {_user, _expired_tokens}} =
+        Accounts.update_user_password(
+          user,
+          %{current_password: valid_user_password(), password: "new valid password"},
+          require_current_password: true
+        )
+
+      assert Accounts.get_user_by_email_and_password(user.email, "new valid password")
+    end
+  end
+
+  describe "update_user_username/3" do
+    test "updates username" do
+      user = user_fixture()
+
+      assert {:ok, updated_user} =
+               Accounts.update_user_username(user, %{username: "new_username"})
+
+      assert updated_user.username == "new_username"
     end
   end
 

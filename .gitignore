@@ -39,3 +39,9 @@ npm-debug.log
 *.db
 *.db-*
 
+# Local SQLite data directory
+/data/*
+!/data/.gitkeep
+
+# Local environment files
+.env

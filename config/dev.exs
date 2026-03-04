@@ -2,7 +2,7 @@ import Config
 
 # Configure your database
 config :icarurss, Icarurss.Repo,
-  database: Path.expand("../icarurss_dev.db", __DIR__),
+  database: Path.expand("../data/icarurss_dev.db", __DIR__),
   pool_size: 5,
   stacktrace: true,
   show_sensitive_data_on_connection_error: true
@@ -55,12 +55,12 @@ config :icarurss, IcarurssWeb.Endpoint,
     web_console_logger: true,
     patterns: [
       # Static assets, except user uploads
-      ~r"priv/static/(?!uploads/).*\.(js|css|png|jpeg|jpg|gif|svg)$"E,
+      ~r"priv/static/(?!uploads/).*\.(js|css|png|jpeg|jpg|gif|svg)$",
       # Gettext translations
-      ~r"priv/gettext/.*\.po$"E,
+      ~r"priv/gettext/.*\.po$",
       # Router, Controllers, LiveViews and LiveComponents
-      ~r"lib/icarurss_web/router\.ex$"E,
-      ~r"lib/icarurss_web/(controllers|live|components)/.*\.(ex|heex)$"E
+      ~r"lib/icarurss_web/router\.ex$",
+      ~r"lib/icarurss_web/(controllers|live|components)/.*\.(ex|heex)$"
     ]
   ]
 

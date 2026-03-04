@@ -2,11 +2,37 @@ defmodule Icarurss.ReaderTest do
   use Icarurss.DataCase
 
   alias Icarurss.Reader
-  alias Icarurss.Reader.{Article, Feed, Folder}
+  alias Icarurss.Reader.{Article, Feed, Folder, Setting}
   alias Icarurss.Reader.Opml
 
   import Icarurss.AccountsFixtures
   import Icarurss.ReaderFixtures
+
+  describe "reader settings" do
+    test "get_or_create_reader_setting/1 creates defaults once per user" do
+      user = user_fixture()
+
+      assert %Setting{} = setting = Reader.get_or_create_reader_setting(user)
+      assert setting.user_id == user.id
+      assert setting.timezone == "UTC"
+      assert setting.article_open_mode == :three_column
+
+      assert setting.id == Reader.get_or_create_reader_setting(user).id
+    end
+
+    test "update_reader_setting/2 updates timezone and mode" do
+      user = user_fixture()
+
+      assert {:ok, %Setting{} = setting} =
+               Reader.update_reader_setting(user, %{
+                 "timezone" => "America/New_York",
+                 "article_open_mode" => "new_tab"
+               })
+
+      assert setting.timezone == "America/New_York"
+      assert setting.article_open_mode == :new_tab
+    end
+  end
 
   describe "folders" do
     test "create_folder/2 creates a folder scoped to the given user" do
@@ -284,6 +310,42 @@ defmodule Icarurss.ReaderTest do
       articles = Reader.list_articles_for_user(user, feed_id: feed.id, filter: :all)
       assert length(articles) == 2
       assert Enum.all?(articles, & &1.is_read)
+    end
+
+    test "subscribe_feed_from_candidate/3 assigns folder when folder_id option is provided" do
+      Application.put_env(
+        :icarurss,
+        :feed_source_fake_fetch_feed,
+        {:ok,
+         %{
+           title: "Foldered Feed",
+           entries: [
+             %{
+               guid: "foldered-1",
+               url: "https://foldered.example.com/a1",
+               title: "Foldered A1",
+               content_html: "<p>A1</p>",
+               published_at: DateTime.utc_now(:second)
+             }
+           ]
+         }}
+      )
+
+      user = user_fixture()
+      folder = folder_fixture(user, %{name: "Foldered"})
+
+      assert {:ok, feed, {:ok, stats}} =
+               Reader.subscribe_feed_from_candidate(
+                 user,
+                 %{
+                   feed_url: "https://foldered.example.com/feed.xml",
+                   title: "Foldered Feed"
+                 },
+                 folder_id: folder.id
+               )
+
+      assert stats.inserted == 1
+      assert feed.folder_id == folder.id
     end
 
     test "subscribe_feed_from_candidate/3 sanitizes imported HTML content" do

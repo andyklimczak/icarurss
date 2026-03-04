@@ -31,42 +31,76 @@ defmodule IcarurssWeb.Layouts do
     default: nil,
     doc: "the current [scope](https://hexdocs.pm/phoenix/scopes.html)"
 
+  attr :full_width, :boolean,
+    default: false,
+    doc: "whether to render the inner content in a full-bleed layout"
+
+  slot :header_content,
+    doc: "optional page-specific content rendered inside the main app header"
+
   slot :inner_block, required: true
 
   def app(assigns) do
     ~H"""
-    <header class="navbar px-4 sm:px-6 lg:px-8">
-      <div class="flex-1">
-        <a href="/" class="flex-1 flex w-fit items-center gap-2">
-          <img src={~p"/images/logo.svg"} width="36" />
-          <span class="text-sm font-semibold">v{Application.spec(:phoenix, :vsn)}</span>
-        </a>
-      </div>
-      <div class="flex-none">
-        <ul class="flex flex-column px-1 space-x-4 items-center">
-          <li>
-            <a href="https://phoenixframework.org/" class="btn btn-ghost">Website</a>
-          </li>
-          <li>
-            <a href="https://github.com/phoenixframework/phoenix" class="btn btn-ghost">GitHub</a>
-          </li>
-          <li>
-            <.theme_toggle />
-          </li>
-          <li>
-            <a href="https://hexdocs.pm/phoenix/overview.html" class="btn btn-primary">
-              Get Started <span aria-hidden="true">&rarr;</span>
-            </a>
-          </li>
-        </ul>
-      </div>
-    </header>
+    <div class="flex min-h-screen flex-col">
+      <header class="w-full border-b border-base-300 bg-base-100/80 px-4 py-3 backdrop-blur sm:px-6 lg:px-8">
+        <div class="flex w-full items-center justify-between gap-3">
+          <a href="/" class="flex w-fit items-center gap-2">
+            <img src={~p"/images/logo.svg"} width="36" />
+            <span class="text-sm font-semibold">v{Application.spec(:phoenix, :vsn)}</span>
+          </a>
 
-    <main class="px-4 py-20 sm:px-6 lg:px-8">
-      <div class="mx-auto max-w-2xl space-y-4">
-        {render_slot(@inner_block)}
-      </div>
-    </main>
+          <nav class="flex items-center gap-2 sm:gap-3">
+            <a href="https://phoenixframework.org/" class="btn btn-ghost btn-sm hidden lg:inline-flex">
+              Website
+            </a>
+            <a
+              href="https://github.com/phoenixframework/phoenix"
+              class="btn btn-ghost btn-sm hidden lg:inline-flex"
+            >
+              GitHub
+            </a>
+            <.theme_toggle />
+
+            <%= if @current_scope && @current_scope.user do %>
+              <span class="hidden md:inline text-sm text-base-content/80">
+                {@current_scope.user.username || @current_scope.user.email}
+              </span>
+              <.link href={~p"/users/settings/reader"} class="btn btn-ghost btn-sm">Settings</.link>
+              <.link href={~p"/users/log-out"} method="delete" class="btn btn-ghost btn-sm">
+                Log out
+              </.link>
+            <% else %>
+              <.link
+                :if={Icarurss.Accounts.registration_enabled?()}
+                href={~p"/users/register"}
+                class="btn btn-ghost btn-sm"
+              >
+                Register
+              </.link>
+              <.link href={~p"/users/log-in"} class="btn btn-primary btn-sm">Log in</.link>
+            <% end %>
+          </nav>
+        </div>
+
+        <div :if={@header_content != []} class="mt-3 border-t border-base-300 pt-3">
+          {render_slot(@header_content)}
+        </div>
+      </header>
+
+      <main class={[
+        "w-full flex-1 min-h-0",
+        @full_width && "py-0",
+        !@full_width && "px-4 py-6 sm:px-6 lg:px-8"
+      ]}>
+        <div class={[
+          "w-full h-full",
+          !@full_width && "mx-auto max-w-7xl space-y-4"
+        ]}>
+          {render_slot(@inner_block)}
+        </div>
+      </main>
+    </div>
 
     <.flash_group flash={@flash} />
     """

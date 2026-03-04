@@ -7,6 +7,7 @@ defmodule IcarurssWeb.ReaderLive do
   @impl true
   def mount(_params, _session, socket) do
     user = socket.assigns.current_scope.user
+    reader_setting = Reader.get_or_create_reader_setting(user)
 
     if connected?(socket) do
       Phoenix.PubSub.subscribe(Icarurss.PubSub, Reader.user_topic(user.id))
@@ -20,6 +21,8 @@ defmodule IcarurssWeb.ReaderLive do
       |> assign(:selected_folder_id, nil)
       |> assign(:selected_article_id, nil)
       |> assign(:selected_article, nil)
+      |> assign(:reader_timezone, reader_setting.timezone)
+      |> assign(:show_new_folder_modal, false)
       |> assign(:new_folder_form, to_form(%{"name" => ""}, as: :new_folder))
       |> assign(:editing_folder_id, nil)
       |> assign(:edit_folder_form, to_form(%{"name" => ""}, as: :edit_folder))
@@ -28,7 +31,9 @@ defmodule IcarurssWeb.ReaderLive do
       |> assign(:confirm_unsubscribe_feed_id, nil)
       |> assign(:search_form, to_form(%{"q" => ""}, as: :search))
       |> assign(:show_add_feed_modal, false)
-      |> assign(:add_feed_form, to_form(%{"url" => ""}, as: :add_feed))
+      |> assign(:show_add_feed_folder_modal, false)
+      |> assign(:add_feed_form, to_form(%{"url" => "", "folder_id" => ""}, as: :add_feed))
+      |> assign(:add_feed_new_folder_form, to_form(%{"name" => ""}, as: :add_feed_new_folder))
       |> assign(:add_feed_candidates, [])
       |> assign(:discovering_feeds, false)
       |> assign(:adding_feed, false)
@@ -66,75 +71,73 @@ defmodule IcarurssWeb.ReaderLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <Layouts.app flash={@flash} current_scope={@current_scope}>
-      <div class="h-[calc(100vh-8rem)] overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm">
-        <div class="border-b border-zinc-200 px-4 py-2">
-          <div class="grid grid-cols-1 gap-2 md:grid-cols-[1fr_2fr_1fr] md:items-center">
-            <div class="flex items-center gap-2">
-              <button
-                id="add-feed-button"
-                type="button"
-                phx-click="open_add_feed"
-                class="inline-flex items-center rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-sm text-zinc-700 transition hover:bg-zinc-100"
-              >
-                <.icon name="hero-plus" class="mr-1 size-4" /> Add Feed
-              </button>
-              <button
-                id="refresh-feeds-button"
-                type="button"
-                phx-click="refresh_feeds"
-                class="inline-flex items-center rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-sm text-zinc-700 transition hover:bg-zinc-100"
-              >
-                <.icon name="hero-arrow-path" class="mr-1 size-4" /> Refresh
-              </button>
-            </div>
-
-            <.form
-              for={@search_form}
-              id="reader-search-form"
-              phx-change="search"
-              phx-submit="search"
-              class="w-full"
+    <Layouts.app flash={@flash} current_scope={@current_scope} full_width={true}>
+      <:header_content>
+        <div class="grid grid-cols-1 gap-2 md:grid-cols-[1fr_2fr_1fr] md:items-center">
+          <div class="flex items-center gap-2">
+            <button
+              id="add-feed-button"
+              type="button"
+              phx-click="open_add_feed"
+              class="inline-flex items-center rounded-md border border-base-300 bg-base-100 px-3 py-1.5 text-sm text-base-content transition hover:bg-base-200"
             >
-              <.input
-                id="reader-search-input"
-                field={@search_form[:q]}
-                type="text"
-                placeholder="Search title, content, feed, url..."
-                class="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm"
-                label="Search"
-              />
-            </.form>
+              <.icon name="hero-plus" class="mr-1 size-4" /> Add Feed
+            </button>
+            <button
+              id="refresh-feeds-button"
+              type="button"
+              phx-click="refresh_feeds"
+              class="inline-flex items-center rounded-md border border-base-300 bg-base-100 px-3 py-1.5 text-sm text-base-content transition hover:bg-base-200"
+            >
+              <.icon name="hero-arrow-path" class="mr-1 size-4" /> Refresh
+            </button>
+          </div>
 
-            <div class="flex justify-start md:justify-end">
-              <button
-                id="mark-visible-read-button"
-                type="button"
-                phx-click="mark_all_read"
-                class="inline-flex items-center rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-sm text-zinc-700 transition hover:bg-zinc-100"
-              >
-                <.icon name="hero-check" class="mr-1 size-4" /> Mark All Read
-              </button>
-            </div>
+          <.form
+            for={@search_form}
+            id="reader-search-form"
+            phx-change="search"
+            phx-submit="search"
+            class="w-full"
+          >
+            <.input
+              id="reader-search-input"
+              field={@search_form[:q]}
+              type="text"
+              placeholder="Search title, content, feed, url..."
+              class="w-full rounded-md border border-base-300 bg-base-100 px-3 py-2 text-sm text-base-content placeholder:text-base-content/50"
+              label="Search"
+            />
+          </.form>
+
+          <div class="flex justify-start md:justify-end">
+            <button
+              id="mark-visible-read-button"
+              type="button"
+              phx-click="mark_all_read"
+              class="inline-flex items-center rounded-md border border-base-300 bg-base-100 px-3 py-1.5 text-sm text-base-content transition hover:bg-base-200"
+            >
+              <.icon name="hero-check" class="mr-1 size-4" /> Mark All Read
+            </button>
           </div>
         </div>
+      </:header_content>
 
-        <div class="grid h-[calc(100%-3.2rem)] grid-cols-1 overflow-hidden lg:grid-cols-[1fr_2fr_4fr]">
-          <aside class="h-full overflow-y-auto border-b border-zinc-200 bg-zinc-50 p-3 lg:border-b-0 lg:border-r">
-            <h2 class="mb-3 text-xs font-semibold uppercase tracking-wide text-zinc-500">
+      <div class="h-full w-full overflow-hidden border-y border-base-300 bg-base-100 shadow-sm">
+        <div class="grid h-full grid-cols-1 overflow-hidden lg:grid-cols-[1fr_2fr_4fr]">
+          <aside class="h-full overflow-y-auto border-b border-base-300 bg-base-200 p-3 lg:border-b-0 lg:border-r">
+            <h2 class="mb-3 text-xs font-semibold uppercase tracking-wide text-base-content/70">
               Smart Feeds
             </h2>
 
-            <.form for={@new_folder_form} id="new-folder-form" phx-submit="create_folder">
-              <.input
-                id="new-folder-name"
-                field={@new_folder_form[:name]}
-                type="text"
-                label="New Folder"
-                placeholder="Add a folder"
-                class="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm"
-              />
-            </.form>
+            <button
+              id="open-new-folder-modal-button"
+              type="button"
+              phx-click="open_new_folder_modal"
+              class="mb-3 inline-flex w-full items-center justify-center rounded-md border border-base-300 bg-base-100 px-3 py-2 text-sm text-base-content transition hover:bg-base-200"
+            >
+              <.icon name="hero-folder-plus" class="mr-1 size-4" /> New Folder
+            </button>
 
             <div class="space-y-1">
               <button
@@ -149,7 +152,7 @@ defmodule IcarurssWeb.ReaderLive do
                 }
               >
                 <span>Unread</span>
-                <span class="rounded-full bg-zinc-200 px-2 py-0.5 text-xs">{@unread_count}</span>
+                <span class="rounded-full bg-base-300 px-2 py-0.5 text-xs">{@unread_count}</span>
               </button>
 
               <button
@@ -193,7 +196,7 @@ defmodule IcarurssWeb.ReaderLive do
                   <span class="truncate">{feed.title || feed.feed_url}</span>
                   <span
                     :if={Map.get(@feed_unread_counts, feed.id, 0) > 0}
-                    class="rounded-full bg-zinc-200 px-2 py-0.5 text-xs"
+                    class="rounded-full bg-base-300 px-2 py-0.5 text-xs"
                   >
                     {Map.get(@feed_unread_counts, feed.id)}
                   </span>
@@ -203,7 +206,7 @@ defmodule IcarurssWeb.ReaderLive do
 
             <div class="mt-4 space-y-2">
               <%= for folder <- @folders do %>
-                <div id={"folder-#{folder.id}"} class="rounded-md border border-zinc-200 bg-white">
+                <div id={"folder-#{folder.id}"} class="rounded-md border border-base-300 bg-base-100">
                   <div :if={@editing_folder_id == folder.id} class="p-2">
                     <.form
                       for={@edit_folder_form}
@@ -216,19 +219,19 @@ defmodule IcarurssWeb.ReaderLive do
                         type="text"
                         label="Rename Folder"
                         required
-                        class="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm"
+                        class="w-full rounded-md border border-base-300 bg-base-100 px-3 py-2 text-sm text-base-content placeholder:text-base-content/50"
                       />
                       <div class="flex gap-2">
                         <button
                           type="submit"
-                          class="inline-flex items-center rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-sm text-zinc-700 transition hover:bg-zinc-100"
+                          class="inline-flex items-center rounded-md border border-base-300 bg-base-100 px-3 py-1.5 text-sm text-base-content transition hover:bg-base-200"
                         >
                           Save
                         </button>
                         <button
                           type="button"
                           phx-click="cancel_rename_folder"
-                          class="inline-flex items-center rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-sm text-zinc-700 transition hover:bg-zinc-100"
+                          class="inline-flex items-center rounded-md border border-base-300 bg-base-100 px-3 py-1.5 text-sm text-base-content transition hover:bg-base-200"
                         >
                           Cancel
                         </button>
@@ -255,7 +258,7 @@ defmodule IcarurssWeb.ReaderLive do
                         id={"rename-folder-#{folder.id}"}
                         phx-click="start_rename_folder"
                         phx-value-id={folder.id}
-                        class="rounded p-1 text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-700"
+                        class="rounded p-1 text-base-content/70 transition hover:bg-base-200 hover:text-base-content"
                       >
                         <.icon name="hero-pencil-square" class="size-4" />
                       </button>
@@ -269,7 +272,7 @@ defmodule IcarurssWeb.ReaderLive do
                           @confirm_delete_folder_id == folder.id &&
                             "bg-red-100 text-red-700 hover:bg-red-200",
                           @confirm_delete_folder_id != folder.id &&
-                            "text-zinc-500 hover:bg-zinc-100 hover:text-zinc-700"
+                            "text-base-content/70 hover:bg-base-200 hover:text-base-content"
                         ]}
                       >
                         <.icon name="hero-trash" class="size-4" />
@@ -279,7 +282,7 @@ defmodule IcarurssWeb.ReaderLive do
                         id={"toggle-folder-#{folder.id}"}
                         phx-click="toggle_folder"
                         phx-value-id={folder.id}
-                        class="rounded p-1 text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-700"
+                        class="rounded p-1 text-base-content/70 transition hover:bg-base-200 hover:text-base-content"
                       >
                         <.icon
                           name={
@@ -302,7 +305,7 @@ defmodule IcarurssWeb.ReaderLive do
                         <span class="truncate">{feed.title || feed.feed_url}</span>
                         <span
                           :if={Map.get(@feed_unread_counts, feed.id, 0) > 0}
-                          class="rounded-full bg-zinc-200 px-2 py-0.5 text-xs"
+                          class="rounded-full bg-base-300 px-2 py-0.5 text-xs"
                         >
                           {Map.get(@feed_unread_counts, feed.id)}
                         </span>
@@ -314,15 +317,15 @@ defmodule IcarurssWeb.ReaderLive do
             </div>
           </aside>
 
-          <section class="h-full overflow-y-auto border-b border-zinc-200 bg-zinc-100 lg:border-b-0 lg:border-r">
-            <div class="border-b border-zinc-200 bg-zinc-50 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-zinc-500">
+          <section class="h-full overflow-y-auto border-b border-base-300 bg-base-200 lg:border-b-0 lg:border-r">
+            <div class="border-b border-base-300 bg-base-200 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-base-content/70">
               Articles ({@articles_count})
             </div>
 
             <div
               :if={@selected_feed_id && @selected_feed}
               id="selected-feed-actions"
-              class="flex flex-wrap items-center gap-2 border-b border-zinc-200 bg-zinc-50 px-3 py-2"
+              class="flex flex-wrap items-center gap-2 border-b border-base-300 bg-base-200 px-3 py-2"
             >
               <.form for={@move_feed_form} id="move-feed-form" phx-change="move_feed" class="min-w-52">
                 <input type="hidden" name="move_feed[feed_id]" value={@selected_feed_id} />
@@ -332,7 +335,7 @@ defmodule IcarurssWeb.ReaderLive do
                   options={folder_options(@folders)}
                   prompt="Ungrouped"
                   label="Folder"
-                  class="w-full rounded-md border border-zinc-300 px-2 py-1 text-sm"
+                  class="w-full rounded-md border border-base-300 bg-base-100 px-2 py-1 text-sm text-base-content"
                 />
               </.form>
 
@@ -346,7 +349,7 @@ defmodule IcarurssWeb.ReaderLive do
                   @confirm_unsubscribe_feed_id == @selected_feed_id &&
                     "border-red-300 bg-red-100 text-red-700 hover:bg-red-200",
                   @confirm_unsubscribe_feed_id != @selected_feed_id &&
-                    "border-zinc-300 bg-white text-zinc-700 hover:bg-zinc-100"
+                    "border-base-300 bg-base-100 text-base-content hover:bg-base-200"
                 ]}
               >
                 <.icon name="hero-trash" class="mr-1 size-4" />
@@ -356,8 +359,11 @@ defmodule IcarurssWeb.ReaderLive do
               </button>
             </div>
 
-            <div id="articles" phx-update="stream" class="divide-y divide-zinc-200">
-              <div id="articles-empty-state" class="hidden p-4 text-sm text-zinc-500 only:block">
+            <div id="articles" phx-update="stream" class="divide-y divide-base-300">
+              <div
+                id="articles-empty-state"
+                class="hidden p-4 text-sm text-base-content/70 only:block"
+              >
                 No articles found.
               </div>
               <button
@@ -367,16 +373,17 @@ defmodule IcarurssWeb.ReaderLive do
                 phx-click="select_article"
                 phx-value-id={article.id}
                 class={[
-                  "w-full p-3 text-left transition hover:bg-zinc-200/60",
-                  MapSet.member?(@highlight_article_ids, article.id) && "bg-emerald-50",
-                  @selected_article_id == article.id && "bg-zinc-200"
+                  "w-full p-3 text-left transition hover:bg-base-300/60",
+                  MapSet.member?(@highlight_article_ids, article.id) &&
+                    "bg-emerald-50 dark:bg-emerald-900/30",
+                  @selected_article_id == article.id && "bg-base-300"
                 ]}
               >
                 <div class="flex items-start gap-3">
                   <%= if article.feed.favicon_url do %>
                     <img src={article.feed.favicon_url} alt="" class="mt-1 size-5 rounded" />
                   <% else %>
-                    <span class="mt-1 rounded bg-zinc-300 p-1 text-zinc-600">
+                    <span class="mt-1 rounded bg-base-300 p-1 text-base-content/80">
                       <.icon name="hero-rss" class="size-3" />
                     </span>
                   <% end %>
@@ -387,12 +394,15 @@ defmodule IcarurssWeb.ReaderLive do
                         class="inline-block size-2 rounded-full bg-blue-500"
                       >
                       </span>
-                      <p class="truncate text-sm font-medium text-zinc-900">{article.title}</p>
+                      <p class="truncate text-sm font-medium text-base-content">{article.title}</p>
                     </div>
-                    <p class="mt-1 text-xs text-zinc-500">
-                      {format_datetime(article.published_at || article.inserted_at)}
+                    <p class="mt-1 text-xs text-base-content/70">
+                      {format_datetime(
+                        article.published_at || article.inserted_at,
+                        @reader_timezone
+                      )}
                     </p>
-                    <p class="text-xs text-zinc-500">
+                    <p class="text-xs text-base-content/70">
                       {article.feed.title || article.feed.base_url || article.feed.site_url}
                     </p>
                   </div>
@@ -401,26 +411,27 @@ defmodule IcarurssWeb.ReaderLive do
             </div>
           </section>
 
-          <section id="article-reader" class="h-full overflow-y-auto bg-white p-6">
+          <section id="article-reader" class="h-full overflow-y-auto bg-base-100 p-6">
             <%= if @selected_article do %>
-              <div class="mb-4 flex items-center justify-between text-sm text-zinc-600">
+              <div class="mb-4 flex items-center justify-between text-sm text-base-content/80">
                 <span>{@selected_article.feed.title || @selected_article.feed.base_url}</span>
                 <%= if @selected_article.feed.favicon_url do %>
                   <img src={@selected_article.feed.favicon_url} alt="" class="size-5 rounded" />
                 <% else %>
-                  <span class="rounded bg-zinc-100 p-1 text-zinc-600">
+                  <span class="rounded bg-base-200 p-1 text-base-content/80">
                     <.icon name="hero-rss" class="size-3" />
                   </span>
                 <% end %>
               </div>
 
-              <h1 class="text-3xl font-semibold tracking-tight text-zinc-900">
+              <h1 class="text-3xl font-semibold tracking-tight text-base-content">
                 {@selected_article.title}
               </h1>
 
-              <p class="mt-3 text-sm text-zinc-500">
+              <p class="mt-3 text-sm text-base-content/70">
                 Published {format_datetime(
-                  @selected_article.published_at || @selected_article.inserted_at
+                  @selected_article.published_at || @selected_article.inserted_at,
+                  @reader_timezone
                 )}
               </p>
 
@@ -429,7 +440,7 @@ defmodule IcarurssWeb.ReaderLive do
                 type="button"
                 phx-click="toggle_star"
                 phx-value-id={@selected_article.id}
-                class="mt-4 inline-flex items-center rounded-md border border-zinc-300 px-3 py-1.5 text-sm text-zinc-700 transition hover:bg-zinc-100"
+                class="mt-4 inline-flex items-center rounded-md border border-base-300 px-3 py-1.5 text-sm text-base-content transition hover:bg-base-200"
               >
                 <.icon
                   name={if @selected_article.is_starred, do: "hero-star-solid", else: "hero-star"}
@@ -438,11 +449,11 @@ defmodule IcarurssWeb.ReaderLive do
                 {if @selected_article.is_starred, do: "Starred", else: "Star"}
               </button>
 
-              <article id="article-content" class="prose prose-zinc mt-6 max-w-none">
+              <article id="article-content" class="prose prose-zinc dark:prose-invert mt-6 max-w-none">
                 {raw(@selected_article.content_html || @selected_article.summary_html || "")}
               </article>
             <% else %>
-              <div class="grid h-full place-items-center text-zinc-400">
+              <div class="grid h-full place-items-center text-base-content/60">
                 <div class="text-center">
                   <.icon name="hero-newspaper" class="mx-auto size-10" />
                   <p class="mt-2 text-sm">Select an article to read</p>
@@ -453,6 +464,62 @@ defmodule IcarurssWeb.ReaderLive do
         </div>
       </div>
 
+      <%= if @show_new_folder_modal do %>
+        <div id="new-folder-modal" class="fixed inset-0 z-40 flex items-center justify-center p-4">
+          <div
+            class="absolute inset-0 bg-zinc-900/40"
+            phx-click="close_new_folder_modal"
+            aria-hidden="true"
+          >
+          </div>
+
+          <div class="relative z-50 w-full max-w-md rounded-xl border border-base-300 bg-base-100 shadow-xl">
+            <div class="flex items-center justify-between border-b border-base-300 px-5 py-4">
+              <h2 class="text-base font-semibold text-base-content">Create Folder</h2>
+              <button
+                id="close-new-folder-modal"
+                type="button"
+                phx-click="close_new_folder_modal"
+                class="rounded p-1 text-base-content/70 transition hover:bg-base-200 hover:text-base-content"
+              >
+                <.icon name="hero-x-mark" class="size-5" />
+              </button>
+            </div>
+
+            <div class="p-5">
+              <.form for={@new_folder_form} id="new-folder-modal-form" phx-submit="create_folder">
+                <.input
+                  id="new-folder-name"
+                  field={@new_folder_form[:name]}
+                  type="text"
+                  label="Folder Name"
+                  placeholder="e.g. Podcasts"
+                  required
+                  class="w-full rounded-md border border-base-300 bg-base-100 px-3 py-2 text-sm text-base-content placeholder:text-base-content/50"
+                />
+                <div class="mt-2 flex items-center justify-end gap-2">
+                  <button
+                    id="cancel-new-folder-button"
+                    type="button"
+                    phx-click="close_new_folder_modal"
+                    class="inline-flex items-center rounded-md border border-base-300 bg-base-100 px-3 py-1.5 text-sm text-base-content transition hover:bg-base-200"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    id="create-new-folder-button"
+                    type="submit"
+                    class="inline-flex items-center rounded-md border border-base-300 bg-base-100 px-3 py-1.5 text-sm text-base-content transition hover:bg-base-200"
+                  >
+                    Create
+                  </button>
+                </div>
+              </.form>
+            </div>
+          </div>
+        </div>
+      <% end %>
+
       <%= if @show_add_feed_modal do %>
         <div id="add-feed-modal" class="fixed inset-0 z-40 flex items-center justify-center p-4">
           <div
@@ -462,14 +529,14 @@ defmodule IcarurssWeb.ReaderLive do
           >
           </div>
 
-          <div class="relative z-50 w-full max-w-2xl rounded-xl border border-zinc-200 bg-white shadow-xl">
-            <div class="flex items-center justify-between border-b border-zinc-200 px-5 py-4">
-              <h2 class="text-base font-semibold text-zinc-900">Add Feed</h2>
+          <div class="relative z-50 w-full max-w-2xl rounded-xl border border-base-300 bg-base-100 shadow-xl">
+            <div class="flex items-center justify-between border-b border-base-300 px-5 py-4">
+              <h2 class="text-base font-semibold text-base-content">Add Feed</h2>
               <button
                 id="close-add-feed-modal"
                 type="button"
                 phx-click="close_add_feed"
-                class="rounded p-1 text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-700"
+                class="rounded p-1 text-base-content/70 transition hover:bg-base-200 hover:text-base-content"
               >
                 <.icon name="hero-x-mark" class="size-5" />
               </button>
@@ -484,11 +551,32 @@ defmodule IcarurssWeb.ReaderLive do
                   label="Website or feed URL"
                   placeholder="https://example.com"
                   required
-                  class="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm"
+                  class="w-full rounded-md border border-base-300 bg-base-100 px-3 py-2 text-sm text-base-content placeholder:text-base-content/50"
                 />
+                <div class="grid grid-cols-[1fr_auto] items-end gap-2">
+                  <.input
+                    id="add-feed-folder-select"
+                    field={@add_feed_form[:folder_id]}
+                    type="select"
+                    options={folder_options(@folders)}
+                    prompt="Ungrouped"
+                    label="Folder"
+                    class="w-full rounded-md border border-base-300 bg-base-100 px-3 py-2 text-sm text-base-content"
+                  />
+                  <button
+                    id="open-add-feed-folder-modal-button"
+                    type="button"
+                    phx-click="open_add_feed_folder_modal"
+                    class="mb-2 inline-flex size-10 items-center justify-center rounded-md border border-base-300 bg-base-100 text-base-content transition hover:bg-base-200"
+                    aria-label="Create folder"
+                    title="Create folder"
+                  >
+                    <.icon name="hero-folder-plus" class="size-5" />
+                  </button>
+                </div>
                 <.button
                   id="discover-feeds-button"
-                  class="w-full"
+                  class="mt-2 w-full"
                   disabled={@discovering_feeds}
                   phx-disable-with="Discovering..."
                 >
@@ -500,26 +588,89 @@ defmodule IcarurssWeb.ReaderLive do
                 <%= for {candidate, index} <- Enum.with_index(@add_feed_candidates) do %>
                   <div
                     id={"feed-candidate-#{index}"}
-                    class="flex items-center justify-between rounded-lg border border-zinc-200 px-3 py-2"
+                    class="flex items-center justify-between rounded-lg border border-base-300 px-3 py-2"
                   >
                     <div class="min-w-0 pr-3">
-                      <p class="truncate text-sm font-medium text-zinc-900">
+                      <p class="truncate text-sm font-medium text-base-content">
                         {candidate.title || candidate.feed_url}
                       </p>
-                      <p class="truncate text-xs text-zinc-500">{candidate.feed_url}</p>
+                      <p class="truncate text-xs text-base-content/70">{candidate.feed_url}</p>
                     </div>
                     <button
                       id={"subscribe-feed-#{index}"}
                       type="button"
                       phx-click="subscribe_feed"
                       phx-value-index={index}
-                      class="inline-flex items-center rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-sm text-zinc-700 transition hover:bg-zinc-100"
+                      class="inline-flex items-center rounded-md border border-base-300 bg-base-100 px-3 py-1.5 text-sm text-base-content transition hover:bg-base-200"
                     >
                       Add
                     </button>
                   </div>
                 <% end %>
               </div>
+
+              <%= if @show_add_feed_folder_modal do %>
+                <div
+                  id="add-feed-folder-modal"
+                  class="fixed inset-0 z-[60] flex items-center justify-center p-4"
+                >
+                  <div
+                    class="absolute inset-0 bg-zinc-900/40"
+                    phx-click="close_add_feed_folder_modal"
+                    aria-hidden="true"
+                  >
+                  </div>
+
+                  <div class="relative z-[70] w-full max-w-md rounded-xl border border-base-300 bg-base-100 shadow-xl">
+                    <div class="flex items-center justify-between border-b border-base-300 px-5 py-4">
+                      <h3 class="text-base font-semibold text-base-content">Create Folder</h3>
+                      <button
+                        id="close-add-feed-folder-modal"
+                        type="button"
+                        phx-click="close_add_feed_folder_modal"
+                        class="rounded p-1 text-base-content/70 transition hover:bg-base-200 hover:text-base-content"
+                      >
+                        <.icon name="hero-x-mark" class="size-5" />
+                      </button>
+                    </div>
+
+                    <div class="p-5">
+                      <.form
+                        for={@add_feed_new_folder_form}
+                        id="add-feed-folder-modal-form"
+                        phx-submit="create_folder_from_add_feed"
+                      >
+                        <.input
+                          id="add-feed-new-folder-name"
+                          field={@add_feed_new_folder_form[:name]}
+                          type="text"
+                          label="Folder Name"
+                          placeholder="e.g. Engineering"
+                          required
+                          class="w-full rounded-md border border-base-300 bg-base-100 px-3 py-2 text-sm text-base-content placeholder:text-base-content/50"
+                        />
+                        <div class="mt-2 flex items-center justify-end gap-2">
+                          <button
+                            id="cancel-add-feed-folder-button"
+                            type="button"
+                            phx-click="close_add_feed_folder_modal"
+                            class="inline-flex items-center rounded-md border border-base-300 bg-base-100 px-3 py-1.5 text-sm text-base-content transition hover:bg-base-200"
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            id="add-feed-create-folder-button"
+                            type="submit"
+                            class="inline-flex items-center rounded-md border border-base-300 bg-base-100 px-3 py-1.5 text-sm text-base-content transition hover:bg-base-200"
+                          >
+                            Create
+                          </button>
+                        </div>
+                      </.form>
+                    </div>
+                  </div>
+                </div>
+              <% end %>
             </div>
           </div>
         </div>
@@ -529,11 +680,35 @@ defmodule IcarurssWeb.ReaderLive do
   end
 
   @impl true
+  def handle_event("open_new_folder_modal", _params, socket) do
+    {:noreply,
+     socket
+     |> assign(:show_new_folder_modal, true)
+     |> assign(:new_folder_form, to_form(%{"name" => ""}, as: :new_folder))}
+  end
+
+  @impl true
+  def handle_event("close_new_folder_modal", _params, socket) do
+    {:noreply, assign(socket, :show_new_folder_modal, false)}
+  end
+
+  @impl true
   def handle_event("open_add_feed", _params, socket) do
+    selected_folder_id =
+      case socket.assigns.selected_folder_id do
+        folder_id when is_integer(folder_id) -> Integer.to_string(folder_id)
+        _ -> ""
+      end
+
     {:noreply,
      socket
      |> assign(:show_add_feed_modal, true)
-     |> assign(:add_feed_form, to_form(%{"url" => ""}, as: :add_feed))
+     |> assign(:show_add_feed_folder_modal, false)
+     |> assign(
+       :add_feed_form,
+       to_form(%{"url" => "", "folder_id" => selected_folder_id}, as: :add_feed)
+     )
+     |> assign(:add_feed_new_folder_form, to_form(%{"name" => ""}, as: :add_feed_new_folder))
      |> assign(:add_feed_candidates, [])
      |> assign(:discovering_feeds, false)
      |> assign(:adding_feed, false)}
@@ -545,7 +720,22 @@ defmodule IcarurssWeb.ReaderLive do
   end
 
   @impl true
-  def handle_event("discover_feeds", %{"add_feed" => %{"url" => raw_url}}, socket) do
+  def handle_event("open_add_feed_folder_modal", _params, socket) do
+    {:noreply,
+     socket
+     |> assign(:show_add_feed_folder_modal, true)
+     |> assign(:add_feed_new_folder_form, to_form(%{"name" => ""}, as: :add_feed_new_folder))}
+  end
+
+  @impl true
+  def handle_event("close_add_feed_folder_modal", _params, socket) do
+    {:noreply, assign(socket, :show_add_feed_folder_modal, false)}
+  end
+
+  @impl true
+  def handle_event("discover_feeds", %{"add_feed" => params}, socket) do
+    raw_url = Map.get(params, "url", "")
+    folder_id = Map.get(params, "folder_id", "")
     url = String.trim(raw_url)
     user = socket.assigns.current_scope.user
 
@@ -553,7 +743,7 @@ defmodule IcarurssWeb.ReaderLive do
       socket
       |> assign(:discovering_feeds, true)
       |> assign(:add_feed_candidates, [])
-      |> assign(:add_feed_form, to_form(%{"url" => url}, as: :add_feed))
+      |> assign(:add_feed_form, to_form(%{"url" => url, "folder_id" => folder_id}, as: :add_feed))
 
     case Reader.discover_feed_candidates(url) do
       {:ok, candidates} ->
@@ -577,8 +767,19 @@ defmodule IcarurssWeb.ReaderLive do
     user = socket.assigns.current_scope.user
     candidate = Enum.at(socket.assigns.add_feed_candidates, parse_id(index))
 
+    selected_folder_id =
+      socket
+      |> add_feed_form_params()
+      |> Map.get("folder_id", "")
+      |> parse_optional_id()
+
     if candidate do
-      case Reader.subscribe_feed_from_candidate(user, candidate, initial_mark_read: true) do
+      case Reader.subscribe_feed_from_candidate(
+             user,
+             candidate,
+             initial_mark_read: true,
+             folder_id: selected_folder_id
+           ) do
         {:ok, feed, {:ok, stats}} ->
           socket =
             socket
@@ -648,10 +849,11 @@ defmodule IcarurssWeb.ReaderLive do
   def handle_event("select_feed", %{"id" => id}, socket) do
     user = socket.assigns.current_scope.user
     feed = Reader.get_feed_for_user!(user, parse_id(id))
+    next_filter = if socket.assigns.filter == :unread, do: :unread, else: :all
 
     socket =
       socket
-      |> assign(:filter, :all)
+      |> assign(:filter, next_filter)
       |> assign(:selected_feed_id, feed.id)
       |> assign_selected_feed(feed)
       |> assign(:selected_folder_id, nil)
@@ -706,7 +908,35 @@ defmodule IcarurssWeb.ReaderLive do
       {:ok, _folder} ->
         {:noreply,
          socket
+         |> assign(:show_new_folder_modal, false)
          |> assign(:new_folder_form, to_form(%{"name" => ""}, as: :new_folder))
+         |> load_sidebar(user)}
+
+      {:error, _changeset} ->
+        {:noreply, put_flash(socket, :error, "Could not create folder.")}
+    end
+  end
+
+  @impl true
+  def handle_event(
+        "create_folder_from_add_feed",
+        %{"add_feed_new_folder" => %{"name" => name}},
+        socket
+      ) do
+    user = socket.assigns.current_scope.user
+
+    case Reader.create_folder(user, %{
+           name: name,
+           position: next_folder_position(socket.assigns.folders)
+         }) do
+      {:ok, folder} ->
+        params = add_feed_form_params(socket, %{"folder_id" => Integer.to_string(folder.id)})
+
+        {:noreply,
+         socket
+         |> assign(:show_add_feed_folder_modal, false)
+         |> assign(:add_feed_form, to_form(params, as: :add_feed))
+         |> assign(:add_feed_new_folder_form, to_form(%{"name" => ""}, as: :add_feed_new_folder))
          |> load_sidebar(user)}
 
       {:error, _changeset} ->
@@ -907,6 +1137,18 @@ defmodule IcarurssWeb.ReaderLive do
     preserve_selected? = Keyword.get(opts, :preserve_selected, false)
     highlight_new? = Keyword.get(opts, :highlight_new, false)
     articles = Reader.list_articles_for_user(user, reader_scope_opts(socket.assigns))
+
+    selected_article =
+      case {socket.assigns.selected_article_id, preserve_selected?} do
+        {nil, _} ->
+          nil
+
+        {selected_id, _} ->
+          Enum.find(articles, &(&1.id == selected_id)) ||
+            if(preserve_selected?, do: socket.assigns.selected_article)
+      end
+
+    articles = maybe_keep_selected_in_unread(articles, selected_article, socket.assigns.filter)
     article_ids = Enum.map(articles, & &1.id)
 
     previous_ids =
@@ -921,16 +1163,6 @@ defmodule IcarurssWeb.ReaderLive do
         |> MapSet.difference(previous_ids)
       else
         MapSet.new()
-      end
-
-    selected_article =
-      case {socket.assigns.selected_article_id, preserve_selected?} do
-        {nil, _} ->
-          nil
-
-        {selected_id, _} ->
-          Enum.find(articles, &(&1.id == selected_id)) ||
-            if(preserve_selected?, do: socket.assigns.selected_article)
       end
 
     socket =
@@ -966,6 +1198,18 @@ defmodule IcarurssWeb.ReaderLive do
     end
   end
 
+  defp maybe_keep_selected_in_unread(articles, nil, _filter), do: articles
+
+  defp maybe_keep_selected_in_unread(articles, selected_article, :unread) do
+    if Enum.any?(articles, &(&1.id == selected_article.id)) do
+      articles
+    else
+      [selected_article | articles]
+    end
+  end
+
+  defp maybe_keep_selected_in_unread(articles, _selected_article, _filter), do: articles
+
   defp parse_filter("unread"), do: :unread
   defp parse_filter("starred"), do: :starred
   defp parse_filter(_), do: :all
@@ -974,34 +1218,78 @@ defmodule IcarurssWeb.ReaderLive do
   defp parse_id(id) when is_binary(id), do: String.to_integer(id)
 
   defp parse_optional_id(nil), do: nil
-  defp parse_optional_id(""), do: nil
-  defp parse_optional_id(id), do: parse_id(id)
+  defp parse_optional_id(id) when is_integer(id), do: id
+
+  defp parse_optional_id(id) when is_binary(id) do
+    trimmed = String.trim(id)
+
+    case Integer.parse(trimmed) do
+      {value, ""} -> value
+      _ -> nil
+    end
+  end
+
+  defp parse_optional_id(_), do: nil
 
   defp sidebar_item_class(active?) do
     [
       "flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-sm transition",
       if(active?,
-        do: "bg-zinc-200 text-zinc-900",
-        else: "text-zinc-700 hover:bg-zinc-100 hover:text-zinc-900"
+        do: "bg-base-300 text-base-content",
+        else: "text-base-content hover:bg-base-200 hover:text-base-content"
       )
     ]
   end
 
-  defp format_datetime(nil), do: "Unknown date"
+  defp format_datetime(nil, _timezone), do: "Unknown date"
 
-  defp format_datetime(%DateTime{} = dt) do
-    Calendar.strftime(dt, "%b %-d, %Y %-I:%M %p")
+  defp format_datetime(%DateTime{} = dt, timezone) do
+    timezone = normalize_timezone(timezone)
+
+    shifted =
+      case DateTime.shift_zone(dt, timezone) do
+        {:ok, shifted_dt} -> shifted_dt
+        _ -> dt
+      end
+
+    Calendar.strftime(shifted, "%b %-d, %Y %-I:%M %p")
   end
 
-  defp format_datetime(%NaiveDateTime{} = dt) do
+  defp format_datetime(%NaiveDateTime{} = dt, timezone) do
     dt
     |> DateTime.from_naive!("Etc/UTC")
-    |> format_datetime()
+    |> format_datetime(timezone)
+  end
+
+  defp normalize_timezone(nil), do: "UTC"
+
+  defp normalize_timezone(timezone) when is_binary(timezone) do
+    trimmed = String.trim(timezone)
+    if trimmed == "", do: "UTC", else: trimmed
+  end
+
+  defp normalize_timezone(_timezone), do: "UTC"
+
+  defp add_feed_form_params(socket, updates \\ %{}) do
+    existing_params =
+      case socket.assigns[:add_feed_form] do
+        %Phoenix.HTML.Form{params: params} when is_map(params) -> params
+        _ -> %{}
+      end
+
+    %{"url" => "", "folder_id" => ""}
+    |> Map.merge(existing_params)
+    |> Map.merge(updates)
   end
 
   defp close_add_feed_modal(socket) do
+    reset_params = %{"url" => "", "folder_id" => ""}
+
     socket
     |> assign(:show_add_feed_modal, false)
+    |> assign(:show_add_feed_folder_modal, false)
+    |> assign(:add_feed_form, to_form(reset_params, as: :add_feed))
+    |> assign(:add_feed_new_folder_form, to_form(%{"name" => ""}, as: :add_feed_new_folder))
     |> assign(:add_feed_candidates, [])
     |> assign(:discovering_feeds, false)
     |> assign(:adding_feed, false)

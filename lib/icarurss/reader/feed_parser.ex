@@ -25,10 +25,13 @@ defmodule Icarurss.Reader.FeedParser do
 
   defp parse_document(xml_body) do
     try do
-      {document, _rest} = :xmerl_scan.string(String.to_charlist(xml_body))
+      xml_bytes = xml_body |> IO.iodata_to_binary() |> :binary.bin_to_list()
+      {document, _rest} = :xmerl_scan.string(xml_bytes)
       {:ok, document}
     rescue
       _ -> {:error, "Could not parse feed XML"}
+    catch
+      :exit, _ -> {:error, "Could not parse feed XML"}
     end
   end
 
@@ -53,9 +56,8 @@ defmodule Icarurss.Reader.FeedParser do
       end
 
     entries =
-      channel
-      |> child_elements()
-      |> Enum.filter(&(local_name(&1) == "item"))
+      root
+      |> rss_item_elements(channel)
       |> Enum.map(&parse_entry(&1, feed_url, base_url))
 
     %{
@@ -65,6 +67,21 @@ defmodule Icarurss.Reader.FeedParser do
       favicon_url: resolve_url(icon_url, base_url) || favicon_url_for(base_url),
       entries: entries
     }
+  end
+
+  defp rss_item_elements(root, channel) do
+    channel_items =
+      channel
+      |> child_elements()
+      |> Enum.filter(&(local_name(&1) == "item"))
+
+    if channel_items == [] and local_name(root) == "RDF" do
+      root
+      |> child_elements()
+      |> Enum.filter(&(local_name(&1) == "item"))
+    else
+      channel_items
+    end
   end
 
   defp parse_atom(root, feed_url) do
@@ -200,7 +217,7 @@ defmodule Icarurss.Reader.FeedParser do
     element
     |> collect_text([])
     |> Enum.reverse()
-    |> IO.iodata_to_binary()
+    |> to_string()
     |> String.trim()
     |> blank_to_nil()
   end

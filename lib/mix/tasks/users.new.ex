@@ -85,13 +85,8 @@ defmodule Mix.Tasks.Users.New do
   end
 
   defp prompt_password do
-    password =
-      Mix.shell().prompt("Password (min 12 chars): ")
-      |> String.trim()
-
-    confirmation =
-      Mix.shell().prompt("Confirm password: ")
-      |> String.trim()
+    password = prompt_secret("Password (min 12 chars): ")
+    confirmation = prompt_secret("Confirm password: ")
 
     cond do
       String.length(password) < 12 ->
@@ -104,6 +99,23 @@ defmodule Mix.Tasks.Users.New do
 
       true ->
         password
+    end
+  end
+
+  defp prompt_secret(prompt) do
+    try do
+      case :io.get_password(String.to_charlist(prompt)) do
+        :eof ->
+          Mix.raise("Input aborted.")
+
+        password when is_list(password) ->
+          password
+          |> List.to_string()
+          |> String.trim()
+      end
+    rescue
+      FunctionClauseError ->
+        Mix.shell().prompt(prompt) |> String.trim()
     end
   end
 

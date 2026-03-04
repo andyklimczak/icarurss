@@ -1,0 +1,13 @@
+.git
+.gitignore
+_build
+deps
+cover
+tmp
+data
+*.db
+*.db-*
+.env
+node_modules
+assets/node_modules
+priv/static/assets

@@ -6,7 +6,7 @@ defmodule Icarurss.Reader do
   import Ecto.Query, warn: false
 
   alias Icarurss.Accounts.User
-  alias Icarurss.Reader.{Article, Feed, Folder, HtmlSanitizer, Opml}
+  alias Icarurss.Reader.{Article, Feed, Folder, HtmlSanitizer, Opml, Setting}
   alias Icarurss.Repo
 
   @type article_filter :: :all | :unread | :starred
@@ -18,6 +18,37 @@ defmodule Icarurss.Reader do
           | {:limit, pos_integer()}
 
   def user_topic(user_id) when is_integer(user_id), do: "reader:user:#{user_id}"
+
+  ## Reader Setting APIs
+
+  def get_reader_setting(%User{id: user_id}) do
+    Repo.get_by(Setting, user_id: user_id)
+  end
+
+  def get_or_create_reader_setting(%User{id: user_id}) do
+    case get_reader_setting(%User{id: user_id}) do
+      nil ->
+        %Setting{}
+        |> Setting.changeset(%{user_id: user_id})
+        |> Repo.insert(on_conflict: :nothing, conflict_target: :user_id)
+
+        Repo.get_by!(Setting, user_id: user_id)
+
+      %Setting{} = setting ->
+        setting
+    end
+  end
+
+  def change_reader_setting(%Setting{} = setting, attrs \\ %{}) do
+    Setting.changeset(setting, attrs)
+  end
+
+  def update_reader_setting(%User{} = user, attrs) when is_map(attrs) do
+    user
+    |> get_or_create_reader_setting()
+    |> Setting.changeset(attrs)
+    |> Repo.update()
+  end
 
   ## Folder APIs
 
@@ -108,12 +139,15 @@ defmodule Icarurss.Reader do
 
   def subscribe_feed_from_candidate(%User{} = user, candidate, opts \\ [])
       when is_map(candidate) do
+    folder_id = normalize_folder_id_for_user(user, Keyword.get(opts, :folder_id))
+
     attrs = %{
       feed_url: map_value(candidate, :feed_url),
       title: map_value(candidate, :title),
       site_url: map_value(candidate, :site_url),
       base_url: map_value(candidate, :base_url),
-      favicon_url: map_value(candidate, :favicon_url)
+      favicon_url: map_value(candidate, :favicon_url),
+      folder_id: folder_id
     }
 
     case create_feed(user, attrs) do
@@ -621,6 +655,21 @@ defmodule Icarurss.Reader do
   defp feed_source_module do
     Application.get_env(:icarurss, :feed_source, Icarurss.Reader.FeedSource.ReqSource)
   end
+
+  defp normalize_folder_id_for_user(_user, nil), do: nil
+
+  defp normalize_folder_id_for_user(%User{id: user_id}, folder_id) when is_integer(folder_id) do
+    exists? =
+      Repo.exists?(
+        from folder in Folder,
+          where: folder.id == ^folder_id and folder.user_id == ^user_id,
+          select: 1
+      )
+
+    if exists?, do: folder_id, else: nil
+  end
+
+  defp normalize_folder_id_for_user(_user, _folder_id), do: nil
 
   defp map_value(map, atom_key) when is_map(map) and is_atom(atom_key) do
     Map.get(map, atom_key) || Map.get(map, Atom.to_string(atom_key))
