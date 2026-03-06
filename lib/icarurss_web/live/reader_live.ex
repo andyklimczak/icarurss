@@ -135,7 +135,12 @@ defmodule IcarurssWeb.ReaderLive do
         </div>
       </:header_content>
 
-      <div class="relative h-full min-h-0 w-full overflow-hidden border-y border-base-300 bg-base-100 shadow-sm">
+      <div
+        id="reader-shell"
+        phx-hook="ReaderChrome"
+        data-unread-count={@unread_count}
+        class="relative h-full min-h-0 w-full overflow-hidden border-y border-base-300 bg-base-100 shadow-sm"
+      >
         <div class={reader_layout_class(@article_open_mode)}>
           <aside class="h-full overflow-y-auto border-b border-base-300 bg-base-200 p-3 lg:border-b-0 lg:border-r">
             <h2 class="mb-3 text-xs font-semibold uppercase tracking-wide text-base-content/70">

@@ -38,6 +38,7 @@ defmodule IcarurssWeb.ReaderLiveTest do
       assert has_element?(view, "#reader-search-input")
       assert has_element?(view, "#mark-visible-read-button")
       assert has_element?(view, "#sidebar-filter-unread")
+      assert has_element?(view, "#reader-shell[phx-hook=\"ReaderChrome\"]")
       assert has_element?(view, "#articles")
       assert has_element?(view, "#article-reader")
     end

@@ -25,11 +25,64 @@ import {LiveSocket} from "phoenix_live_view"
 import {hooks as colocatedHooks} from "phoenix-colocated/icarurss"
 import topbar from "../vendor/topbar"
 
+const defaultFaviconHref = "/favicon.ico"
+
+const buildUnreadFavicon = (count) => {
+  const badgeText = count > 9 ? "9+" : String(count)
+  const svg = `
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+      <rect width="64" height="64" rx="16" fill="#111827"/>
+      <path d="M18 16h28v6H35v24h-6V22H18z" fill="#f8fafc"/>
+      <circle cx="48" cy="18" r="12" fill="#ef4444"/>
+      <text x="48" y="22" text-anchor="middle" font-family="ui-sans-serif, system-ui, sans-serif" font-size="11" font-weight="700" fill="#fff">${badgeText}</text>
+    </svg>
+  `.trim()
+
+  return `data:image/svg+xml,${encodeURIComponent(svg)}`
+}
+
+const setFavicon = (href) => {
+  let favicon = document.getElementById("app-favicon")
+
+  if (!favicon) {
+    favicon = document.createElement("link")
+    favicon.id = "app-favicon"
+    favicon.rel = "icon"
+    document.head.appendChild(favicon)
+  }
+
+  favicon.href = href
+}
+
+const ReaderChrome = {
+  mounted() {
+    this.updateFavicon()
+  },
+
+  updated() {
+    this.updateFavicon()
+  },
+
+  destroyed() {
+    setFavicon(defaultFaviconHref)
+  },
+
+  updateFavicon() {
+    const count = Number.parseInt(this.el.dataset.unreadCount || "0", 10)
+
+    if (Number.isFinite(count) && count > 0) {
+      setFavicon(buildUnreadFavicon(count))
+    } else {
+      setFavicon(defaultFaviconHref)
+    }
+  },
+}
+
 const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
   params: {_csrf_token: csrfToken},
-  hooks: {...colocatedHooks},
+  hooks: {ReaderChrome, ...colocatedHooks},
 })
 
 // Show progress bar on live navigation and form submits
@@ -80,4 +133,3 @@ if (process.env.NODE_ENV === "development") {
     window.liveReloader = reloader
   })
 }
-
