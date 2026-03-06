@@ -90,6 +90,16 @@ Set `.env` values:
   - `PORT=4000`
   - `DATABASE_PATH=/data/icarurss_prod.db`
   - `REGISTRATION_ENABLED=false`
+  - `PHX_HOST=localhost`
+  - `PHX_SCHEME=http`
+  - `PHX_URL_PORT=4000`
+  - `FORCE_SSL=false`
+
+For a direct LAN deployment, set `PHX_HOST` to the VM IP or hostname and leave
+`PHX_SCHEME=http`, `PHX_URL_PORT=4000`, and `FORCE_SSL=false`.
+
+For a reverse proxy / HTTPS deployment, set `PHX_HOST` to the public hostname,
+`PHX_SCHEME=https`, `PHX_URL_PORT=443`, and `FORCE_SSL=true`.
 
 ### 4. First start
 
