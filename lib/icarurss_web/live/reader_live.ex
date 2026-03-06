@@ -22,6 +22,7 @@ defmodule IcarurssWeb.ReaderLive do
       |> assign(:selected_article_id, nil)
       |> assign(:selected_article, nil)
       |> assign(:reader_timezone, reader_setting.timezone)
+      |> assign(:article_open_mode, reader_setting.article_open_mode)
       |> assign(:show_new_folder_modal, false)
       |> assign(:new_folder_form, to_form(%{"name" => ""}, as: :new_folder))
       |> assign(:editing_folder_id, nil)
@@ -123,8 +124,8 @@ defmodule IcarurssWeb.ReaderLive do
         </div>
       </:header_content>
 
-      <div class="h-full w-full overflow-hidden border-y border-base-300 bg-base-100 shadow-sm">
-        <div class="grid h-full grid-cols-1 overflow-hidden lg:grid-cols-[1fr_2fr_4fr]">
+      <div class="relative h-full w-full overflow-hidden border-y border-base-300 bg-base-100 shadow-sm">
+        <div class={reader_layout_class(@article_open_mode)}>
           <aside class="h-full overflow-y-auto border-b border-base-300 bg-base-200 p-3 lg:border-b-0 lg:border-r">
             <h2 class="mb-3 text-xs font-semibold uppercase tracking-wide text-base-content/70">
               Smart Feeds
@@ -317,7 +318,7 @@ defmodule IcarurssWeb.ReaderLive do
             </div>
           </aside>
 
-          <section class="h-full overflow-y-auto border-b border-base-300 bg-base-200 lg:border-b-0 lg:border-r">
+          <section class={article_list_layout_class(@article_open_mode)}>
             <div class="border-b border-base-300 bg-base-200 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-base-content/70">
               Articles ({@articles_count})
             </div>
@@ -411,57 +412,55 @@ defmodule IcarurssWeb.ReaderLive do
             </div>
           </section>
 
-          <section id="article-reader" class="h-full overflow-y-auto bg-base-100 p-6">
-            <%= if @selected_article do %>
-              <div class="mb-4 flex items-center justify-between text-sm text-base-content/80">
-                <span>{@selected_article.feed.title || @selected_article.feed.base_url}</span>
-                <%= if @selected_article.feed.favicon_url do %>
-                  <img src={@selected_article.feed.favicon_url} alt="" class="size-5 rounded" />
-                <% else %>
-                  <span class="rounded bg-base-200 p-1 text-base-content/80">
-                    <.icon name="hero-rss" class="size-3" />
-                  </span>
-                <% end %>
-              </div>
-
-              <h1 class="text-3xl font-semibold tracking-tight text-base-content">
-                {@selected_article.title}
-              </h1>
-
-              <p class="mt-3 text-sm text-base-content/70">
-                Published {format_datetime(
-                  @selected_article.published_at || @selected_article.inserted_at,
-                  @reader_timezone
-                )}
-              </p>
-
-              <button
-                id="toggle-star-button"
-                type="button"
-                phx-click="toggle_star"
-                phx-value-id={@selected_article.id}
-                class="mt-4 inline-flex items-center rounded-md border border-base-300 px-3 py-1.5 text-sm text-base-content transition hover:bg-base-200"
-              >
-                <.icon
-                  name={if @selected_article.is_starred, do: "hero-star-solid", else: "hero-star"}
-                  class="mr-1 size-4"
-                />
-                {if @selected_article.is_starred, do: "Starred", else: "Star"}
-              </button>
-
-              <article id="article-content" class="prose prose-zinc dark:prose-invert mt-6 max-w-none">
-                {raw(@selected_article.content_html || @selected_article.summary_html || "")}
-              </article>
-            <% else %>
-              <div class="grid h-full place-items-center text-base-content/60">
-                <div class="text-center">
-                  <.icon name="hero-newspaper" class="mx-auto size-10" />
-                  <p class="mt-2 text-sm">Select an article to read</p>
-                </div>
-              </div>
-            <% end %>
+          <section
+            :if={@article_open_mode == :three_column}
+            id="article-reader"
+            class="h-full overflow-y-auto bg-base-100 p-6"
+          >
+            <.article_reader_content
+              selected_article={@selected_article}
+              reader_timezone={@reader_timezone}
+            />
           </section>
         </div>
+
+        <%= if @article_open_mode == :new_tab and @selected_article do %>
+          <div
+            id="article-overlay"
+            class="absolute inset-0 z-30 flex justify-end"
+            phx-window-keydown="close_article_overlay"
+            phx-key="escape"
+          >
+            <button
+              id="article-overlay-backdrop"
+              type="button"
+              phx-click="close_article_overlay"
+              class="absolute inset-0 bg-zinc-900/35 backdrop-blur-[1px] transition-opacity"
+              aria-label="Close article overlay"
+            >
+            </button>
+            <section
+              id="article-overlay-panel"
+              class="relative z-40 h-full w-full max-w-[min(64rem,96vw)] overflow-y-auto border-l border-base-300 bg-base-100 p-6 shadow-2xl sm:w-[min(64rem,92vw)] lg:w-[min(64rem,68vw)]"
+            >
+              <div class="mb-4 flex justify-end">
+                <button
+                  id="close-article-overlay-button"
+                  type="button"
+                  phx-click="close_article_overlay"
+                  class="inline-flex items-center rounded-md border border-base-300 bg-base-100 px-3 py-1.5 text-sm text-base-content transition hover:bg-base-200"
+                >
+                  <.icon name="hero-x-mark" class="mr-1 size-4" /> Close
+                </button>
+              </div>
+
+              <.article_reader_content
+                selected_article={@selected_article}
+                reader_timezone={@reader_timezone}
+              />
+            </section>
+          </div>
+        <% end %>
       </div>
 
       <%= if @show_new_folder_modal do %>
@@ -1086,6 +1085,19 @@ defmodule IcarurssWeb.ReaderLive do
   end
 
   @impl true
+  def handle_event("close_article_overlay", _params, socket) do
+    user = socket.assigns.current_scope.user
+
+    socket =
+      socket
+      |> assign(:selected_article_id, nil)
+      |> assign(:selected_article, nil)
+      |> load_articles(user)
+
+    {:noreply, socket}
+  end
+
+  @impl true
   def handle_event("toggle_star", %{"id" => id}, socket) do
     user = socket.assigns.current_scope.user
     article = Reader.get_article_for_user!(user, parse_id(id))
@@ -1123,6 +1135,62 @@ defmodule IcarurssWeb.ReaderLive do
       |> load_articles(user)
 
     {:noreply, socket}
+  end
+
+  attr :selected_article, :map, default: nil
+  attr :reader_timezone, :string, required: true
+
+  defp article_reader_content(assigns) do
+    ~H"""
+    <%= if @selected_article do %>
+      <div class="mb-4 flex items-center justify-between text-sm text-base-content/80">
+        <span>{@selected_article.feed.title || @selected_article.feed.base_url}</span>
+        <%= if @selected_article.feed.favicon_url do %>
+          <img src={@selected_article.feed.favicon_url} alt="" class="size-5 rounded" />
+        <% else %>
+          <span class="rounded bg-base-200 p-1 text-base-content/80">
+            <.icon name="hero-rss" class="size-3" />
+          </span>
+        <% end %>
+      </div>
+
+      <h1 class="text-3xl font-semibold tracking-tight text-base-content">
+        {@selected_article.title}
+      </h1>
+
+      <p class="mt-3 text-sm text-base-content/70">
+        Published {format_datetime(
+          @selected_article.published_at || @selected_article.inserted_at,
+          @reader_timezone
+        )}
+      </p>
+
+      <button
+        id="toggle-star-button"
+        type="button"
+        phx-click="toggle_star"
+        phx-value-id={@selected_article.id}
+        class="mt-4 inline-flex items-center rounded-md border border-base-300 px-3 py-1.5 text-sm text-base-content transition hover:bg-base-200"
+      >
+        <.icon
+          name={if @selected_article.is_starred, do: "hero-star-solid", else: "hero-star"}
+          class="mr-1 size-4"
+        />
+        {if @selected_article.is_starred, do: "Starred", else: "Star"}
+      </button>
+
+      <article id="article-content" class="prose prose-zinc dark:prose-invert mt-6 max-w-none">
+        {raw(@selected_article.content_html || @selected_article.summary_html || "")}
+      </article>
+    <% else %>
+      <div class="grid h-full place-items-center text-base-content/60">
+        <div class="text-center">
+          <.icon name="hero-newspaper" class="mx-auto size-10" />
+          <p class="mt-2 text-sm">Select an article to read</p>
+        </div>
+      </div>
+    <% end %>
+    """
   end
 
   defp load_sidebar(socket, user) do
@@ -1230,6 +1298,22 @@ defmodule IcarurssWeb.ReaderLive do
   end
 
   defp parse_optional_id(_), do: nil
+
+  defp reader_layout_class(:new_tab) do
+    "grid h-full grid-cols-1 overflow-hidden lg:grid-cols-[1fr_2fr]"
+  end
+
+  defp reader_layout_class(_article_open_mode) do
+    "grid h-full grid-cols-1 overflow-hidden lg:grid-cols-[1fr_2fr_4fr]"
+  end
+
+  defp article_list_layout_class(:new_tab) do
+    "h-full overflow-y-auto border-b border-base-300 bg-base-200 lg:border-b-0"
+  end
+
+  defp article_list_layout_class(_article_open_mode) do
+    "h-full overflow-y-auto border-b border-base-300 bg-base-200 lg:border-b-0 lg:border-r"
+  end
 
   defp sidebar_item_class(active?) do
     [

@@ -60,6 +60,38 @@ defmodule IcarurssWeb.ReaderLiveTest do
       assert has_element?(view, "#article-content")
     end
 
+    test "overlay reader mode opens and dismisses article panel", %{conn: conn} do
+      user = user_fixture()
+      feed = feed_fixture(user)
+      article = article_fixture(user, feed, %{is_read: false})
+
+      {:ok, _setting} =
+        Reader.update_reader_setting(user, %{"article_open_mode" => "new_tab"})
+
+      {:ok, view, _html} =
+        conn
+        |> log_in_user(user)
+        |> live(~p"/")
+
+      refute has_element?(view, "#article-reader")
+      refute has_element?(view, "#article-overlay")
+
+      view
+      |> element("#articles-#{article.id}")
+      |> render_click()
+
+      assert has_element?(view, "#article-overlay")
+      assert has_element?(view, "#article-overlay-panel")
+      assert has_element?(view, "#close-article-overlay-button")
+
+      view
+      |> element("#close-article-overlay-button")
+      |> render_click()
+
+      refute has_element?(view, "#article-overlay")
+      refute has_element?(view, "#articles-#{article.id}")
+    end
+
     test "renders article timestamps in the user's configured timezone", %{conn: conn} do
       user = user_fixture()
       feed = feed_fixture(user)

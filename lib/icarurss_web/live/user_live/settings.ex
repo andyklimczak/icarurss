@@ -94,7 +94,7 @@ defmodule IcarurssWeb.UserLive.Settings do
                 label="Article Open Mode"
                 options={[
                   {"Inline reader (3 columns)", :three_column},
-                  {"Open in new tab (2 columns)", :new_tab}
+                  {"Overlay reader (2 columns + panel)", :new_tab}
                 ]}
               />
               <.button variant="primary" phx-disable-with="Saving...">
