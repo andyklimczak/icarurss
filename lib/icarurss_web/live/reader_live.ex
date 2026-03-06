@@ -65,6 +65,17 @@ defmodule IcarurssWeb.ReaderLive do
   end
 
   @impl true
+  def handle_info({:feed_refresh_failed, %{user_id: user_id}}, socket) do
+    user = socket.assigns.current_scope.user
+
+    if user.id == user_id do
+      {:noreply, load_sidebar(socket, user)}
+    else
+      {:noreply, socket}
+    end
+  end
+
+  @impl true
   def handle_info(:clear_article_highlights, socket) do
     {:noreply, assign(socket, :highlight_article_ids, MapSet.new())}
   end
@@ -124,7 +135,7 @@ defmodule IcarurssWeb.ReaderLive do
         </div>
       </:header_content>
 
-      <div class="relative h-full w-full overflow-hidden border-y border-base-300 bg-base-100 shadow-sm">
+      <div class="relative h-full min-h-0 w-full overflow-hidden border-y border-base-300 bg-base-100 shadow-sm">
         <div class={reader_layout_class(@article_open_mode)}>
           <aside class="h-full overflow-y-auto border-b border-base-300 bg-base-200 p-3 lg:border-b-0 lg:border-r">
             <h2 class="mb-3 text-xs font-semibold uppercase tracking-wide text-base-content/70">
@@ -148,7 +159,8 @@ defmodule IcarurssWeb.ReaderLive do
                 phx-value-filter="unread"
                 class={
                   sidebar_item_class(
-                    @filter == :unread and is_nil(@selected_feed_id) and is_nil(@selected_folder_id)
+                    @filter == :unread and is_nil(@selected_feed_id) and is_nil(@selected_folder_id),
+                    nil
                   )
                 }
               >
@@ -163,7 +175,8 @@ defmodule IcarurssWeb.ReaderLive do
                 phx-value-filter="all"
                 class={
                   sidebar_item_class(
-                    @filter == :all and is_nil(@selected_feed_id) and is_nil(@selected_folder_id)
+                    @filter == :all and is_nil(@selected_feed_id) and is_nil(@selected_folder_id),
+                    nil
                   )
                 }
               >
@@ -177,7 +190,8 @@ defmodule IcarurssWeb.ReaderLive do
                 phx-value-filter="starred"
                 class={
                   sidebar_item_class(
-                    @filter == :starred and is_nil(@selected_feed_id) and is_nil(@selected_folder_id)
+                    @filter == :starred and is_nil(@selected_feed_id) and is_nil(@selected_folder_id),
+                    nil
                   )
                 }
               >
@@ -192,14 +206,39 @@ defmodule IcarurssWeb.ReaderLive do
                   id={"sidebar-feed-#{feed.id}"}
                   phx-click="select_feed"
                   phx-value-id={feed.id}
-                  class={sidebar_item_class(@selected_feed_id == feed.id)}
+                  title={feed.last_refresh_error}
+                  class={sidebar_item_class(@selected_feed_id == feed.id, feed.last_refresh_error)}
                 >
-                  <span class="truncate">{feed.title || feed.feed_url}</span>
-                  <span
-                    :if={Map.get(@feed_unread_counts, feed.id, 0) > 0}
-                    class="rounded-full bg-base-300 px-2 py-0.5 text-xs"
-                  >
-                    {Map.get(@feed_unread_counts, feed.id)}
+                  <span class="flex min-w-0 items-center gap-2">
+                    <img
+                      :if={feed.favicon_url}
+                      src={feed.favicon_url}
+                      alt=""
+                      class="size-4 shrink-0 rounded-sm"
+                    />
+                    <span
+                      :if={!feed.favicon_url}
+                      id={"sidebar-feed-placeholder-#{feed.id}"}
+                      class="inline-flex size-4 shrink-0 items-center justify-center rounded-sm bg-base-300 text-[10px] font-semibold uppercase text-base-content/75"
+                    >
+                      {feed_placeholder_label(feed)}
+                    </span>
+                    <span
+                      :if={feed.last_refresh_error}
+                      id={"sidebar-feed-error-#{feed.id}"}
+                      class="contents"
+                    >
+                      <.icon name="hero-exclamation-triangle" class="size-4 shrink-0 text-red-600" />
+                    </span>
+                    <span class="truncate">{feed.title || feed.feed_url}</span>
+                  </span>
+                  <span class="flex items-center gap-2">
+                    <span
+                      :if={Map.get(@feed_unread_counts, feed.id, 0) > 0}
+                      class="rounded-full bg-base-300 px-2 py-0.5 text-xs"
+                    >
+                      {Map.get(@feed_unread_counts, feed.id)}
+                    </span>
                   </span>
                 </button>
               <% end %>
@@ -249,7 +288,7 @@ defmodule IcarurssWeb.ReaderLive do
                       id={"sidebar-folder-#{folder.id}"}
                       phx-click="select_folder"
                       phx-value-id={folder.id}
-                      class={sidebar_item_class(@selected_folder_id == folder.id)}
+                      class={sidebar_item_class(@selected_folder_id == folder.id, nil)}
                     >
                       <span class="truncate">{folder.name}</span>
                     </button>
@@ -301,14 +340,44 @@ defmodule IcarurssWeb.ReaderLive do
                         id={"sidebar-feed-#{feed.id}"}
                         phx-click="select_feed"
                         phx-value-id={feed.id}
-                        class={sidebar_item_class(@selected_feed_id == feed.id)}
+                        title={feed.last_refresh_error}
+                        class={
+                          sidebar_item_class(@selected_feed_id == feed.id, feed.last_refresh_error)
+                        }
                       >
-                        <span class="truncate">{feed.title || feed.feed_url}</span>
-                        <span
-                          :if={Map.get(@feed_unread_counts, feed.id, 0) > 0}
-                          class="rounded-full bg-base-300 px-2 py-0.5 text-xs"
-                        >
-                          {Map.get(@feed_unread_counts, feed.id)}
+                        <span class="flex min-w-0 items-center gap-2">
+                          <img
+                            :if={feed.favicon_url}
+                            src={feed.favicon_url}
+                            alt=""
+                            class="size-4 shrink-0 rounded-sm"
+                          />
+                          <span
+                            :if={!feed.favicon_url}
+                            id={"sidebar-feed-placeholder-#{feed.id}"}
+                            class="inline-flex size-4 shrink-0 items-center justify-center rounded-sm bg-base-300 text-[10px] font-semibold uppercase text-base-content/75"
+                          >
+                            {feed_placeholder_label(feed)}
+                          </span>
+                          <span
+                            :if={feed.last_refresh_error}
+                            id={"sidebar-feed-error-#{feed.id}"}
+                            class="contents"
+                          >
+                            <.icon
+                              name="hero-exclamation-triangle"
+                              class="size-4 shrink-0 text-red-600"
+                            />
+                          </span>
+                          <span class="truncate">{feed.title || feed.feed_url}</span>
+                        </span>
+                        <span class="flex items-center gap-2">
+                          <span
+                            :if={Map.get(@feed_unread_counts, feed.id, 0) > 0}
+                            class="rounded-full bg-base-300 px-2 py-0.5 text-xs"
+                          >
+                            {Map.get(@feed_unread_counts, feed.id)}
+                          </span>
                         </span>
                       </button>
                     <% end %>
@@ -1315,14 +1384,33 @@ defmodule IcarurssWeb.ReaderLive do
     "h-full overflow-y-auto border-b border-base-300 bg-base-200 lg:border-b-0 lg:border-r"
   end
 
-  defp sidebar_item_class(active?) do
+  defp sidebar_item_class(active?, last_refresh_error) do
     [
       "flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-sm transition",
-      if(active?,
-        do: "bg-base-300 text-base-content",
-        else: "text-base-content hover:bg-base-200 hover:text-base-content"
-      )
+      active? && last_refresh_error && "bg-red-100 text-red-800 ring-1 ring-red-300",
+      active? && is_nil(last_refresh_error) && "bg-base-300 text-base-content",
+      !active? && last_refresh_error && "text-red-700 hover:bg-red-50 hover:text-red-800",
+      !active? && is_nil(last_refresh_error) &&
+        "text-base-content hover:bg-base-200 hover:text-base-content"
     ]
+  end
+
+  defp feed_placeholder_label(feed) do
+    label_source =
+      case Map.get(feed, :title) do
+        title when is_binary(title) and title != "" -> title
+        _ -> Map.get(feed, :feed_url, "")
+      end
+
+    label_source
+    |> String.trim()
+    |> String.replace_prefix("https://", "")
+    |> String.replace_prefix("http://", "")
+    |> String.first()
+    |> case do
+      nil -> "?"
+      value -> value
+    end
   end
 
   defp format_datetime(nil, _timezone), do: "Unknown date"

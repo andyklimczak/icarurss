@@ -1,9 +1,11 @@
 defmodule Icarurss.ReaderTest do
   use Icarurss.DataCase
+  use Oban.Testing, repo: Icarurss.Repo
 
   alias Icarurss.Reader
   alias Icarurss.Reader.{Article, Feed, Folder, Setting}
   alias Icarurss.Reader.Opml
+  alias Icarurss.Workers.RefreshFeedWorker
 
   import Icarurss.AccountsFixtures
   import Icarurss.ReaderFixtures
@@ -498,6 +500,8 @@ defmodule Icarurss.ReaderTest do
       assert stats.folders_created == 1
       assert stats.feeds_added == 2
       assert stats.feeds_skipped == 1
+      assert stats.refreshes_queued == 2
+      assert stats.refreshes_failed == 0
 
       [folder] = Reader.list_folders(user)
       assert folder.name == "Blogs"
@@ -512,13 +516,51 @@ defmodule Icarurss.ReaderTest do
 
       assert grouped_feed.folder_id == folder.id
       assert is_nil(ungrouped_feed.folder_id)
+
+      assert_enqueued(
+        worker: RefreshFeedWorker,
+        queue: :feed_refresh,
+        args: %{feed_id: grouped_feed.id}
+      )
+
+      assert_enqueued(
+        worker: RefreshFeedWorker,
+        queue: :feed_refresh,
+        args: %{feed_id: ungrouped_feed.id}
+      )
     end
 
     test "import_opml_for_user/2 returns an error for malformed OPML" do
       user = user_fixture()
 
-      assert {:error, "Could not parse OPML document"} =
-               Reader.import_opml_for_user(user, "<opml")
+      assert {:error, reason} = Reader.import_opml_for_user(user, "<opml")
+      assert reason =~ "Could not parse OPML document:"
+      assert reason =~ "unexpected end of document"
+    end
+
+    test "import_opml_for_user/2 supports utf-8 feed titles" do
+      user = user_fixture()
+
+      opml = """
+      <?xml version="1.0" encoding="utf-8"?>
+      <opml version="1.0">
+        <body>
+          <outline text="blog">
+            <outline type="rss" text="쑥스러운 쑥로그" xmlUrl="http://blog.rss.naver.com/comingsook.xml" htmlUrl="https://blog.naver.com/comingsook?fromRss=true&amp;trackingCode=rss" />
+          </outline>
+        </body>
+      </opml>
+      """
+
+      assert {:ok, stats} = Reader.import_opml_for_user(user, opml)
+      assert stats.feeds_added == 1
+      assert stats.refreshes_queued == 1
+      assert stats.refreshes_failed == 0
+
+      [feed] = Reader.list_feeds(user)
+      assert feed.title == "쑥스러운 쑥로그"
+      assert feed.feed_url == "http://blog.rss.naver.com/comingsook.xml"
+      assert_enqueued(worker: RefreshFeedWorker, queue: :feed_refresh, args: %{feed_id: feed.id})
     end
 
     test "export_opml_for_user/1 exports grouped and ungrouped subscriptions" do

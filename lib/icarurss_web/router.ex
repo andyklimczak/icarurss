@@ -57,6 +57,7 @@ defmodule IcarurssWeb.Router do
 
     get "/users/settings/opml/export", FeedSettingsController, :export_opml
     post "/users/settings/opml/import", FeedSettingsController, :import_opml
+    post "/users/settings/opml/reset", FeedSettingsController, :reset_opml_data
     get "/users/settings/feeds/export", FeedSettingsController, :export_opml
     post "/users/settings/feeds/import", FeedSettingsController, :import_opml
     post "/users/update-password", UserSessionController, :update_password

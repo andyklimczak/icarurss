@@ -42,7 +42,11 @@ defmodule IcarurssWeb.Layouts do
 
   def app(assigns) do
     ~H"""
-    <div class="flex min-h-screen flex-col">
+    <div class={[
+      "flex flex-col",
+      @full_width && "h-screen overflow-hidden",
+      !@full_width && "min-h-screen"
+    ]}>
       <header class="w-full border-b border-base-300 bg-base-100/80 px-4 py-3 backdrop-blur sm:px-6 lg:px-8">
         <div class="flex w-full items-center justify-between gap-3">
           <a href="/" class="flex w-fit items-center gap-2">
@@ -89,12 +93,12 @@ defmodule IcarurssWeb.Layouts do
       </header>
 
       <main class={[
-        "w-full flex-1 min-h-0",
+        "w-full flex flex-1 min-h-0 flex-col",
         @full_width && "py-0",
         !@full_width && "px-4 py-6 sm:px-6 lg:px-8"
       ]}>
         <div class={[
-          "w-full h-full",
+          "w-full flex-1 min-h-0",
           !@full_width && "mx-auto max-w-7xl space-y-4"
         ]}>
           {render_slot(@inner_block)}

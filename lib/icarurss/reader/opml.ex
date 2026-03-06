@@ -50,14 +50,45 @@ defmodule Icarurss.Reader.Opml do
 
   defp parse_document(opml_xml) do
     try do
-      {document, _rest} = :xmerl_scan.string(String.to_charlist(opml_xml), quiet: true)
+      {document, _rest} = :xmerl_scan.string(:binary.bin_to_list(opml_xml), quiet: true)
       {:ok, document}
     rescue
-      _ -> {:error, "Could not parse OPML document"}
+      error -> {:error, "Could not parse OPML document: #{Exception.message(error)}"}
     catch
-      :exit, _reason -> {:error, "Could not parse OPML document"}
+      :exit, reason -> {:error, "Could not parse OPML document: #{format_parse_error(reason)}"}
     end
   end
+
+  defp format_parse_error({:fatal, {:unexpected_end, _file, line, col}}) do
+    "unexpected end of document#{format_location(line, col)}"
+  end
+
+  defp format_parse_error({:fatal, {{:endtag_does_not_match, details}, _file, line, col}}) do
+    "mismatched closing tag (#{format_endtag_details(details)})#{format_location(line, col)}"
+  end
+
+  defp format_parse_error({:fatal, {reason, _file, line, col}}) do
+    "#{format_reason(reason)}#{format_location(line, col)}"
+  end
+
+  defp format_parse_error(reason), do: inspect(reason)
+
+  defp format_endtag_details({:was, was, :should_have_been, expected}) do
+    "got </#{was}> but expected </#{expected}>"
+  end
+
+  defp format_endtag_details(details), do: inspect(details)
+
+  defp format_reason(reason) when is_atom(reason) do
+    reason
+    |> Atom.to_string()
+    |> String.replace("_", " ")
+  end
+
+  defp format_reason(reason), do: inspect(reason)
+
+  defp format_location({:line, line}, {:col, col}), do: " at line #{line}, column #{col}"
+  defp format_location(_line, _col), do: ""
 
   defp find_body(document) do
     case document |> first_child_by_name("body") do

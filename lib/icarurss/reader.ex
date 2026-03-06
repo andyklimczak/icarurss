@@ -4,10 +4,12 @@ defmodule Icarurss.Reader do
   """
 
   import Ecto.Query, warn: false
+  require Logger
 
   alias Icarurss.Accounts.User
   alias Icarurss.Reader.{Article, Feed, Folder, HtmlSanitizer, Opml, Setting}
   alias Icarurss.Repo
+  alias Icarurss.Workers.RefreshFeedWorker
 
   @type article_filter :: :all | :unread | :starred
   @type list_articles_opt ::
@@ -174,6 +176,30 @@ defmodule Icarurss.Reader do
     Feed.changeset(feed, attrs)
   end
 
+  def delete_all_feeds_and_articles_for_user(%User{id: user_id}) do
+    feed_count =
+      Repo.aggregate(from(feed in Feed, where: feed.user_id == ^user_id), :count, :id)
+
+    article_count =
+      Repo.aggregate(from(article in Article, where: article.user_id == ^user_id), :count, :id)
+
+    multi =
+      Ecto.Multi.new()
+      |> Ecto.Multi.delete_all(
+        :articles,
+        from(article in Article, where: article.user_id == ^user_id)
+      )
+      |> Ecto.Multi.delete_all(:feeds, from(feed in Feed, where: feed.user_id == ^user_id))
+
+    case Repo.transaction(multi) do
+      {:ok, _result} ->
+        {:ok, %{feeds_deleted: feed_count, articles_deleted: article_count}}
+
+      {:error, _step, reason, _changes_so_far} ->
+        {:error, reason}
+    end
+  end
+
   def refresh_user_feeds(%User{} = user, opts \\ []) do
     initial_mark_read? = Keyword.get(opts, :initial_mark_read, false)
     max_concurrency = Keyword.get(opts, :max_concurrency, 4)
@@ -254,12 +280,12 @@ defmodule Icarurss.Reader do
         |> Enum.map(& &1.feed_url)
         |> MapSet.new()
 
-      {stats, _folder_lookup, _feed_urls, _next_position} =
+      {stats, _folder_lookup, _feed_urls, _next_position, imported_feeds} =
         Enum.reduce(
           entries,
           {%{folders_created: 0, feeds_added: 0, feeds_skipped: 0}, initial_folder_lookup,
-           existing_feed_urls, initial_next_folder_position},
-          fn entry, {stats, folder_lookup, feed_urls, next_position} ->
+           existing_feed_urls, initial_next_folder_position, []},
+          fn entry, {stats, folder_lookup, feed_urls, next_position, imported_feeds} ->
             folder_name = map_value(entry, :folder_name)
 
             {folder_id, folder_lookup, next_position, stats} =
@@ -279,11 +305,11 @@ defmodule Icarurss.Reader do
             cond do
               not present?(feed_url) ->
                 {%{stats | feeds_skipped: stats.feeds_skipped + 1}, folder_lookup, feed_urls,
-                 next_position}
+                 next_position, imported_feeds}
 
               MapSet.member?(feed_urls, feed_url) ->
                 {%{stats | feeds_skipped: stats.feeds_skipped + 1}, folder_lookup, feed_urls,
-                 next_position}
+                 next_position, imported_feeds}
 
               true ->
                 attrs = %{
@@ -298,17 +324,17 @@ defmodule Icarurss.Reader do
                 case create_feed(user, attrs) do
                   {:ok, feed} ->
                     {%{stats | feeds_added: stats.feeds_added + 1}, folder_lookup,
-                     MapSet.put(feed_urls, feed.feed_url), next_position}
+                     MapSet.put(feed_urls, feed.feed_url), next_position, [feed | imported_feeds]}
 
                   {:error, _changeset} ->
                     {%{stats | feeds_skipped: stats.feeds_skipped + 1}, folder_lookup, feed_urls,
-                     next_position}
+                     next_position, imported_feeds}
                 end
             end
           end
         )
 
-      {:ok, stats}
+      {:ok, Map.merge(stats, queue_initial_feed_refreshes(imported_feeds))}
     end
   end
 
@@ -388,7 +414,8 @@ defmodule Icarurss.Reader do
       site_url: payload[:site_url] || feed.site_url,
       base_url: payload[:base_url] || feed.base_url,
       favicon_url: payload[:favicon_url] || feed.favicon_url,
-      last_fetched_at: DateTime.utc_now(:second)
+      last_fetched_at: DateTime.utc_now(:second),
+      last_refresh_error: nil
     }
 
     update_feed(feed, attrs)
@@ -629,27 +656,56 @@ defmodule Icarurss.Reader do
   end
 
   defp maybe_broadcast_feed_refresh(feed, stats) do
-    if stats.inserted > 0 or stats.updated > 0 do
-      Phoenix.PubSub.broadcast(
-        Icarurss.PubSub,
-        user_topic(feed.user_id),
-        {:feeds_refreshed,
-         %{
-           user_id: feed.user_id,
-           feed_id: feed.id,
-           inserted: stats.inserted,
-           updated: stats.updated
-         }}
-      )
-    end
+    Phoenix.PubSub.broadcast(
+      Icarurss.PubSub,
+      user_topic(feed.user_id),
+      {:feeds_refreshed,
+       %{
+         user_id: feed.user_id,
+         feed_id: feed.id,
+         inserted: stats.inserted,
+         updated: stats.updated
+       }}
+    )
   end
 
   defp emit_refresh_error(feed, reason) do
+    error_message = format_refresh_error_reason(reason)
+
+    case update_feed(feed, %{last_refresh_error: error_message}) do
+      {:ok, updated_feed} ->
+        Phoenix.PubSub.broadcast(
+          Icarurss.PubSub,
+          user_topic(updated_feed.user_id),
+          {:feed_refresh_failed,
+           %{
+             user_id: updated_feed.user_id,
+             feed_id: updated_feed.id,
+             reason: error_message
+           }}
+        )
+
+      {:error, changeset} ->
+        Logger.error(
+          "Could not persist refresh error for feed_id=#{feed.id}: #{inspect(changeset.errors)}"
+        )
+    end
+
     :telemetry.execute(
       [:icarurss, :reader, :feed_refresh, :error],
       %{count: 1},
-      %{feed_id: feed.id, user_id: feed.user_id, reason: to_string(reason)}
+      %{feed_id: feed.id, user_id: feed.user_id, reason: error_message}
     )
+  end
+
+  defp format_refresh_error_reason(reason) when is_binary(reason) do
+    String.slice(reason, 0, 500)
+  end
+
+  defp format_refresh_error_reason(reason) do
+    reason
+    |> inspect()
+    |> String.slice(0, 500)
   end
 
   defp feed_source_module do
@@ -740,4 +796,20 @@ defmodule Icarurss.Reader do
 
   defp favicon_url_for(nil), do: nil
   defp favicon_url_for(origin), do: origin <> "/favicon.ico"
+
+  defp queue_initial_feed_refreshes(feeds) do
+    Enum.reduce(feeds, %{refreshes_queued: 0, refreshes_failed: 0}, fn feed, stats ->
+      case %{feed_id: feed.id} |> RefreshFeedWorker.new() |> Oban.insert() do
+        {:ok, _job} ->
+          %{stats | refreshes_queued: stats.refreshes_queued + 1}
+
+        {:error, reason} ->
+          Logger.error(
+            "Could not enqueue initial refresh for imported feed_id=#{feed.id}: #{inspect(reason)}"
+          )
+
+          %{stats | refreshes_failed: stats.refreshes_failed + 1}
+      end
+    end)
+  end
 end

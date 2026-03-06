@@ -267,7 +267,11 @@ defmodule Icarurss.Reader.FeedParser do
         nil
 
       true ->
-        parse_iso_datetime(trimmed) || parse_http_date(trimmed)
+        parse_iso_datetime(trimmed) ||
+          parse_rfc822_datetime(trimmed) ||
+          parse_rfc822_date_without_weekday(trimmed) ||
+          parse_http_date(trimmed) ||
+          parse_longform_datetime(trimmed)
     end
   end
 
@@ -297,6 +301,152 @@ defmodule Icarurss.Reader.FeedParser do
         DateTime.from_naive!(naive_datetime, "Etc/UTC")
     end
   end
+
+  defp parse_rfc822_datetime(value) do
+    case Regex.named_captures(
+           ~r/^(?<weekday>[A-Za-z]{3}),\s+(?<day>\d{1,2})\s+(?<month>[A-Za-z]{3})\s+(?<year>\d{4})\s+(?<hour>\d{2}):(?<minute>\d{2})(?::(?<second>\d{2}))?\s+(?<offset>Z|UT|UTC|GMT|[+-]\d{4})$/,
+           value
+         ) do
+      %{
+        "day" => day,
+        "month" => month_name,
+        "year" => year,
+        "hour" => hour,
+        "minute" => minute,
+        "offset" => offset
+      } = captures ->
+        with {:ok, month} <- month_number(month_name),
+             {day, ""} <- Integer.parse(day),
+             {year, ""} <- Integer.parse(year),
+             {hour, ""} <- Integer.parse(hour),
+             {minute, ""} <- Integer.parse(minute),
+             second <- parse_seconds(captures["second"]),
+             {:ok, offset_seconds} <- parse_timezone_offset(offset),
+             {:ok, naive_datetime} <- NaiveDateTime.new(year, month, day, hour, minute, second) do
+          naive_datetime
+          |> DateTime.from_naive!("Etc/UTC")
+          |> DateTime.add(-offset_seconds, :second)
+        else
+          _ -> nil
+        end
+
+      _ ->
+        nil
+    end
+  end
+
+  defp parse_rfc822_date_without_weekday(value) do
+    case Regex.named_captures(
+           ~r/^(?<day>\d{1,2})\s+(?<month>[A-Za-z]{3})\s+(?<year>\d{4})\s+(?<hour>\d{2}):(?<minute>\d{2})(?::(?<second>\d{2}))?\s+(?<offset>Z|UT|UTC|GMT|[+-]\d{4})$/,
+           value
+         ) do
+      %{
+        "day" => day,
+        "month" => month_name,
+        "year" => year,
+        "hour" => hour,
+        "minute" => minute,
+        "offset" => offset
+      } = captures ->
+        with {:ok, month} <- month_number(month_name),
+             {day, ""} <- Integer.parse(day),
+             {year, ""} <- Integer.parse(year),
+             {hour, ""} <- Integer.parse(hour),
+             {minute, ""} <- Integer.parse(minute),
+             second <- parse_seconds(captures["second"]),
+             {:ok, offset_seconds} <- parse_timezone_offset(offset),
+             {:ok, naive_datetime} <- NaiveDateTime.new(year, month, day, hour, minute, second) do
+          naive_datetime
+          |> DateTime.from_naive!("Etc/UTC")
+          |> DateTime.add(-offset_seconds, :second)
+        else
+          _ -> nil
+        end
+
+      _ ->
+        nil
+    end
+  end
+
+  defp parse_longform_datetime(value) do
+    case Regex.named_captures(
+           ~r/^(?<weekday>[A-Za-z]+),\s+(?<month>[A-Za-z]+)\s+(?<day>\d{1,2}),\s+(?<year>\d{4})\s+-\s+(?<hour>\d{1,2}):(?<minute>\d{2})(?::(?<second>\d{2}))?$/,
+           value
+         ) do
+      %{
+        "month" => month_name,
+        "day" => day,
+        "year" => year,
+        "hour" => hour,
+        "minute" => minute
+      } = captures ->
+        with {:ok, month} <- month_number(month_name),
+             {day, ""} <- Integer.parse(day),
+             {year, ""} <- Integer.parse(year),
+             {hour, ""} <- Integer.parse(hour),
+             {minute, ""} <- Integer.parse(minute),
+             second <- parse_seconds(captures["second"]),
+             {:ok, naive_datetime} <- NaiveDateTime.new(year, month, day, hour, minute, second) do
+          DateTime.from_naive!(naive_datetime, "Etc/UTC")
+        else
+          _ -> nil
+        end
+
+      _ ->
+        nil
+    end
+  end
+
+  defp month_number(month_name) do
+    case String.downcase(month_name) do
+      "jan" -> {:ok, 1}
+      "january" -> {:ok, 1}
+      "feb" -> {:ok, 2}
+      "february" -> {:ok, 2}
+      "mar" -> {:ok, 3}
+      "march" -> {:ok, 3}
+      "apr" -> {:ok, 4}
+      "april" -> {:ok, 4}
+      "may" -> {:ok, 5}
+      "jun" -> {:ok, 6}
+      "june" -> {:ok, 6}
+      "jul" -> {:ok, 7}
+      "july" -> {:ok, 7}
+      "aug" -> {:ok, 8}
+      "august" -> {:ok, 8}
+      "sep" -> {:ok, 9}
+      "sept" -> {:ok, 9}
+      "september" -> {:ok, 9}
+      "oct" -> {:ok, 10}
+      "october" -> {:ok, 10}
+      "nov" -> {:ok, 11}
+      "november" -> {:ok, 11}
+      "dec" -> {:ok, 12}
+      "december" -> {:ok, 12}
+      _ -> :error
+    end
+  end
+
+  defp parse_timezone_offset(value) when value in ["Z", "UT", "UTC", "GMT"], do: {:ok, 0}
+
+  defp parse_timezone_offset(
+         <<sign::binary-size(1), hours::binary-size(2), minutes::binary-size(2)>>
+       )
+       when sign in ["+", "-"] do
+    with {hours, ""} <- Integer.parse(hours),
+         {minutes, ""} <- Integer.parse(minutes) do
+      total_seconds = hours * 3600 + minutes * 60
+      {:ok, if(sign == "-", do: -total_seconds, else: total_seconds)}
+    else
+      _ -> :error
+    end
+  end
+
+  defp parse_timezone_offset(_value), do: :error
+
+  defp parse_seconds(nil), do: 0
+  defp parse_seconds(""), do: 0
+  defp parse_seconds(value) when is_binary(value), do: String.to_integer(value)
 
   defp resolve_url(nil, _base), do: nil
 

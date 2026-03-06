@@ -1,10 +1,22 @@
 defmodule IcarurssWeb.FeedSettingsControllerTest do
   use IcarurssWeb.ConnCase
+  use Oban.Testing, repo: Icarurss.Repo
 
   import Icarurss.AccountsFixtures
   import Icarurss.ReaderFixtures
 
   alias Icarurss.Reader
+  alias Icarurss.Workers.RefreshFeedWorker
+
+  setup do
+    original_dev_routes = Application.get_env(:icarurss, :dev_routes, false)
+
+    on_exit(fn ->
+      Application.put_env(:icarurss, :dev_routes, original_dev_routes)
+    end)
+
+    :ok
+  end
 
   describe "GET /users/settings/opml/export" do
     test "exports OPML for the current user", %{conn: conn} do
@@ -69,9 +81,19 @@ defmodule IcarurssWeb.FeedSettingsControllerTest do
 
       assert redirected_to(conn) == ~p"/users/settings/opml"
       assert Phoenix.Flash.get(conn.assigns.flash, :info) =~ "Import complete"
+      assert Phoenix.Flash.get(conn.assigns.flash, :info) =~ "1 initial refresh queued"
 
-      assert Enum.any?(Reader.list_feeds(user), &(&1.feed_url == "https://hnrss.org/frontpage"))
+      imported_feed =
+        Enum.find(Reader.list_feeds(user), &(&1.feed_url == "https://hnrss.org/frontpage"))
+
+      assert imported_feed
       assert Enum.any?(Reader.list_folders(user), &(&1.name == "Tech"))
+
+      assert_enqueued(
+        worker: RefreshFeedWorker,
+        queue: :feed_refresh,
+        args: %{feed_id: imported_feed.id}
+      )
     end
 
     test "shows error for malformed OPML upload", %{conn: conn} do
@@ -101,7 +123,59 @@ defmodule IcarurssWeb.FeedSettingsControllerTest do
         })
 
       assert redirected_to(conn) == ~p"/users/settings/opml"
-      assert Phoenix.Flash.get(conn.assigns.flash, :error) == "Could not import OPML file."
+
+      assert Phoenix.Flash.get(conn.assigns.flash, :error) =~
+               "Could not import OPML file: Could not parse OPML document:"
+    end
+  end
+
+  describe "POST /users/settings/opml/reset" do
+    test "deletes only the current user's feeds and articles when development reset is enabled",
+         %{
+           conn: conn
+         } do
+      Application.put_env(:icarurss, :dev_routes, true)
+
+      user = user_fixture()
+      other_user = user_fixture()
+
+      user_feed = feed_fixture(user)
+      other_feed = feed_fixture(other_user)
+
+      _user_article = article_fixture(user, user_feed)
+      _other_article = article_fixture(other_user, other_feed)
+
+      conn =
+        conn
+        |> log_in_user(user)
+        |> post(~p"/users/settings/opml/reset")
+
+      assert redirected_to(conn) == ~p"/users/settings/opml"
+
+      assert Phoenix.Flash.get(conn.assigns.flash, :info) ==
+               "Development reset complete: 1 feeds and 1 articles deleted."
+
+      assert Reader.list_feeds(user) == []
+      assert Reader.list_articles_for_user(user, filter: :all) == []
+      assert length(Reader.list_feeds(other_user)) == 1
+      assert length(Reader.list_articles_for_user(other_user, filter: :all)) == 1
+    end
+
+    test "returns not found when development reset is disabled", %{conn: conn} do
+      Application.put_env(:icarurss, :dev_routes, false)
+
+      user = user_fixture()
+      feed = feed_fixture(user)
+      _article = article_fixture(user, feed)
+
+      conn =
+        conn
+        |> log_in_user(user)
+        |> post(~p"/users/settings/opml/reset")
+
+      assert response(conn, 404) == "Not Found"
+      assert length(Reader.list_feeds(user)) == 1
+      assert length(Reader.list_articles_for_user(user, filter: :all)) == 1
     end
   end
 end

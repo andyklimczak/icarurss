@@ -41,6 +41,72 @@ defmodule Icarurss.Reader.FeedParserTest do
       assert %DateTime{} = entry.published_at
     end
 
+    test "parses long-form RSS pubDate values without timezone" do
+      rss = """
+      <?xml version="1.0" encoding="UTF-8"?>
+      <rss version="2.0">
+        <channel>
+          <title>RSS Example</title>
+          <link>https://example.com</link>
+          <item>
+            <guid>guid-1</guid>
+            <title>Article One</title>
+            <link>https://example.com/articles/1</link>
+            <pubDate>Thursday, March 5, 2026 - 16:28</pubDate>
+          </item>
+        </channel>
+      </rss>
+      """
+
+      assert {:ok, payload} = FeedParser.parse(rss, feed_url: "https://example.com/feed.xml")
+      assert [entry] = payload.entries
+      assert entry.published_at == ~U[2026-03-05 16:28:00Z]
+    end
+
+    test "parses RFC-style RSS pubDate values with numeric timezone offsets" do
+      rss = """
+      <?xml version="1.0" encoding="UTF-8"?>
+      <rss version="2.0">
+        <channel>
+          <title>RSS Example</title>
+          <link>https://example.com</link>
+          <item>
+            <guid>guid-1</guid>
+            <title>Article One</title>
+            <link>https://example.com/articles/1</link>
+            <pubDate>Sun, 14 Jan 2024 12:14:05 -0600</pubDate>
+          </item>
+        </channel>
+      </rss>
+      """
+
+      assert {:ok, payload} = FeedParser.parse(rss, feed_url: "https://example.com/feed.xml")
+      assert [entry] = payload.entries
+      assert entry.published_at == ~U[2024-01-14 18:14:05Z]
+    end
+
+    test "parses RFC-style RSS pubDate values without a weekday" do
+      rss = """
+      <?xml version="1.0" encoding="UTF-8"?>
+      <rss version="2.0">
+        <channel>
+          <title>RSS Example</title>
+          <link>https://example.com</link>
+          <item>
+            <guid>guid-1</guid>
+            <title>Article One</title>
+            <link>https://example.com/articles/1</link>
+            <pubDate>27 Feb 2026 00:00:00 UT</pubDate>
+          </item>
+        </channel>
+      </rss>
+      """
+
+      assert {:ok, payload} = FeedParser.parse(rss, feed_url: "https://example.com/feed.xml")
+      assert [entry] = payload.entries
+      assert entry.published_at == ~U[2026-02-27 00:00:00Z]
+    end
+
     test "parses RSS feeds containing UTF-8 punctuation in text nodes" do
       rss = """
       <?xml version="1.0" encoding="UTF-8"?>

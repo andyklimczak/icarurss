@@ -130,6 +130,77 @@ defmodule IcarurssWeb.ReaderLiveTest do
       refute has_element?(view, "#articles-#{read_article.id}")
     end
 
+    test "sidebar feeds render favicons when available", %{conn: conn} do
+      user = user_fixture()
+
+      feed =
+        feed_fixture(user, %{favicon_url: "https://example.com/favicon.ico", title: "Fav Feed"})
+
+      {:ok, view, _html} =
+        conn
+        |> log_in_user(user)
+        |> live(~p"/")
+
+      assert has_element?(
+               view,
+               ~s(#sidebar-feed-#{feed.id} img[src="https://example.com/favicon.ico"])
+             )
+    end
+
+    test "sidebar feeds render a letter placeholder when favicon is missing", %{conn: conn} do
+      user = user_fixture()
+      feed = feed_fixture(user, %{favicon_url: nil, title: "No Icon Feed"})
+
+      {:ok, view, _html} =
+        conn
+        |> log_in_user(user)
+        |> live(~p"/")
+
+      assert has_element?(view, "#sidebar-feed-placeholder-#{feed.id}", "N")
+    end
+
+    test "feeds with refresh errors show an error marker in the sidebar", %{conn: conn} do
+      user = user_fixture()
+      feed = feed_fixture(user, %{last_refresh_error: "got response with status 500"})
+
+      {:ok, view, _html} =
+        conn
+        |> log_in_user(user)
+        |> live(~p"/")
+
+      assert has_element?(view, "#sidebar-feed-error-#{feed.id}")
+
+      assert has_element?(
+               view,
+               ~s(#sidebar-feed-#{feed.id}[title="got response with status 500"])
+             )
+    end
+
+    test "sidebar updates when a background refresh fails", %{conn: conn} do
+      user = user_fixture()
+      feed = feed_fixture(user)
+
+      {:ok, view, _html} =
+        conn
+        |> log_in_user(user)
+        |> live(~p"/")
+
+      refute has_element?(view, "#sidebar-feed-error-#{feed.id}")
+
+      {:ok, _updated_feed} = Reader.update_feed(feed, %{last_refresh_error: "upstream timeout"})
+
+      Phoenix.PubSub.broadcast(
+        Icarurss.PubSub,
+        Reader.user_topic(user.id),
+        {:feed_refresh_failed, %{user_id: user.id, feed_id: feed.id, reason: "upstream timeout"}}
+      )
+
+      _ = render(view)
+
+      assert has_element?(view, "#sidebar-feed-error-#{feed.id}")
+      assert has_element?(view, ~s(#sidebar-feed-#{feed.id}[title="upstream timeout"]))
+    end
+
     test "selected unread article stays visible until another article is selected", %{conn: conn} do
       user = user_fixture()
       feed = feed_fixture(user)

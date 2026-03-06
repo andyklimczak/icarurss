@@ -12,6 +12,7 @@ defmodule Icarurss.Reader.Feed do
     field :base_url, :string
     field :favicon_url, :string
     field :last_fetched_at, :utc_datetime
+    field :last_refresh_error, :string
 
     belongs_to :user, User
     belongs_to :folder, Folder
@@ -29,7 +30,8 @@ defmodule Icarurss.Reader.Feed do
       :feed_url,
       :base_url,
       :favicon_url,
-      :last_fetched_at
+      :last_fetched_at,
+      :last_refresh_error
     ])
     |> validate_required([:feed_url, :user_id])
     |> validate_format(:feed_url, ~r/^https?:\/\//, message: "must be a valid URL")
@@ -38,6 +40,7 @@ defmodule Icarurss.Reader.Feed do
     |> validate_length(:site_url, max: 2048)
     |> validate_length(:base_url, max: 2048)
     |> validate_length(:favicon_url, max: 2048)
+    |> validate_length(:last_refresh_error, max: 500)
     |> unique_constraint([:user_id, :feed_url])
     |> assoc_constraint(:folder)
   end

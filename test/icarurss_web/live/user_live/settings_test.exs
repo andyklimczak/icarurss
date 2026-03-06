@@ -7,6 +7,16 @@ defmodule IcarurssWeb.UserLive.SettingsTest do
   import Icarurss.AccountsFixtures
 
   describe "Settings page" do
+    setup do
+      original_dev_routes = Application.get_env(:icarurss, :dev_routes, false)
+
+      on_exit(fn ->
+        Application.put_env(:icarurss, :dev_routes, original_dev_routes)
+      end)
+
+      :ok
+    end
+
     test "renders reader settings page", %{conn: conn} do
       {:ok, _lv, html} =
         conn
@@ -32,6 +42,8 @@ defmodule IcarurssWeb.UserLive.SettingsTest do
     end
 
     test "renders OPML settings page", %{conn: conn} do
+      Application.put_env(:icarurss, :dev_routes, false)
+
       {:ok, _lv, html} =
         conn
         |> log_in_user(user_fixture())
@@ -40,8 +52,21 @@ defmodule IcarurssWeb.UserLive.SettingsTest do
       assert html =~ "Account Settings"
       assert html =~ "Export OPML"
       assert html =~ "Import OPML"
+      refute html =~ "Delete All Feeds and Articles"
       refute html =~ "Save Password"
       refute html =~ "Save Reader Settings"
+    end
+
+    test "renders development reset button on OPML settings page when enabled", %{conn: conn} do
+      Application.put_env(:icarurss, :dev_routes, true)
+
+      {:ok, lv, _html} =
+        conn
+        |> log_in_user(user_fixture())
+        |> live(~p"/users/settings/opml")
+
+      assert has_element?(lv, "#reset-opml-data-form")
+      assert has_element?(lv, "#reset-opml-data-button")
     end
 
     test "renders username settings page", %{conn: conn} do

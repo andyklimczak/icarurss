@@ -14,6 +14,7 @@ defmodule Mix.Tasks.Users.New do
 
   @impl true
   def run(args) do
+    disable_endpoint_server()
     Mix.Task.run("app.start")
 
     with {:ok, actor} <- parse_actor(args),
@@ -36,6 +37,16 @@ defmodule Mix.Tasks.Users.New do
       {:error, reason} ->
         Mix.raise(reason)
     end
+  end
+
+  defp disable_endpoint_server do
+    endpoint_config = Application.get_env(:icarurss, IcarurssWeb.Endpoint, [])
+
+    Application.put_env(
+      :icarurss,
+      IcarurssWeb.Endpoint,
+      Keyword.put(endpoint_config, :server, false)
+    )
   end
 
   defp parse_actor(args) do

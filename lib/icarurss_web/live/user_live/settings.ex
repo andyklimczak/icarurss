@@ -141,6 +141,31 @@ defmodule IcarurssWeb.UserLive.Settings do
                   </.button>
                 </.form>
               </div>
+
+              <div
+                :if={@dev_opml_reset_enabled}
+                class="rounded-lg border border-red-300 bg-red-50 p-4 text-red-900"
+              >
+                <h3 class="text-sm font-semibold">Development Reset</h3>
+                <p class="mt-1 text-sm text-red-800/80">
+                  Delete all feeds and articles for your account so you can test OPML re-imports.
+                  This button is only available when development routes are enabled.
+                </p>
+                <.form
+                  for={@reset_opml_data_form}
+                  id="reset-opml-data-form"
+                  action={~p"/users/settings/opml/reset"}
+                  method="post"
+                >
+                  <button
+                    id="reset-opml-data-button"
+                    type="submit"
+                    class="mt-3 inline-flex items-center rounded-md border border-red-400 bg-red-100 px-3 py-1.5 text-sm font-medium text-red-900 transition hover:bg-red-200"
+                  >
+                    <.icon name="hero-trash" class="mr-1 size-4" /> Delete All Feeds and Articles
+                  </button>
+                </.form>
+              </div>
             </div>
           <% @live_action == :username -> %>
             <.form
@@ -232,6 +257,8 @@ defmodule IcarurssWeb.UserLive.Settings do
       |> assign(:reader_settings_form, to_form(reader_settings_changeset, as: :reader_setting))
       |> assign(:timezone_options, timezone_options())
       |> assign(:import_opml_form, to_form(%{}, as: :import_opml))
+      |> assign(:reset_opml_data_form, to_form(%{}, as: :reset_opml_data))
+      |> assign(:dev_opml_reset_enabled, Application.get_env(:icarurss, :dev_routes, false))
       |> assign(:username_form, to_form(username_changeset, as: :user))
       |> assign(:password_form, to_form(password_changeset))
       |> assign(:trigger_submit, false)
