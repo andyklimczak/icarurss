@@ -39,6 +39,7 @@ defmodule IcarurssWeb.ReaderLive do
       |> assign(:discovering_feeds, false)
       |> assign(:adding_feed, false)
       |> assign(:articles_count, 0)
+      |> assign(:opened_unread_article_ids, MapSet.new())
       |> assign(:highlight_article_ids, MapSet.new())
       |> assign(:article_ids_in_view, [])
       |> stream(:articles, [])
@@ -441,14 +442,18 @@ defmodule IcarurssWeb.ReaderLive do
               >
                 No articles found.
               </div>
-              <button
+              <a
                 :for={{dom_id, article} <- @streams.articles}
                 id={dom_id}
-                type="button"
+                href={article.url || "#"}
                 phx-click="select_article"
                 phx-value-id={article.id}
+                phx-hook="ArticleListItem"
+                data-article-id={article.id}
                 class={[
-                  "w-full p-3 text-left transition hover:bg-base-300/60",
+                  "block w-full p-3 text-left transition hover:bg-base-300/60",
+                  visually_unread?(article, @opened_unread_article_ids) &&
+                    "bg-sky-50/70 dark:bg-sky-950/20",
                   MapSet.member?(@highlight_article_ids, article.id) &&
                     "bg-emerald-50 dark:bg-emerald-900/30",
                   @selected_article_id == article.id && "bg-base-300"
@@ -465,11 +470,20 @@ defmodule IcarurssWeb.ReaderLive do
                   <div class="min-w-0 flex-1">
                     <div class="flex items-center gap-2">
                       <span
-                        :if={!article.is_read}
+                        :if={visually_unread?(article, @opened_unread_article_ids)}
+                        id={"article-unread-indicator-#{article.id}"}
                         class="inline-block size-2 rounded-full bg-blue-500"
                       >
                       </span>
-                      <p class="truncate text-sm font-medium text-base-content">{article.title}</p>
+                      <p class={[
+                        "truncate text-sm text-base-content",
+                        visually_unread?(article, @opened_unread_article_ids) &&
+                          "font-semibold",
+                        !visually_unread?(article, @opened_unread_article_ids) &&
+                          "font-medium"
+                      ]}>
+                        {article.title}
+                      </p>
                     </div>
                     <p class="mt-1 text-xs text-base-content/70">
                       {format_datetime(
@@ -482,7 +496,7 @@ defmodule IcarurssWeb.ReaderLive do
                     </p>
                   </div>
                 </div>
-              </button>
+              </a>
             </div>
           </section>
 
@@ -1140,19 +1154,18 @@ defmodule IcarurssWeb.ReaderLive do
     user = socket.assigns.current_scope.user
     article = Reader.get_article_for_user!(user, parse_id(id))
 
-    article =
+    opened_unread_article_ids =
       if article.is_read do
-        article
+        socket.assigns.opened_unread_article_ids
       else
-        {:ok, updated_article} = Reader.mark_article_read(article)
-        updated_article
+        MapSet.put(socket.assigns.opened_unread_article_ids, article.id)
       end
 
     socket =
       socket
+      |> assign(:opened_unread_article_ids, opened_unread_article_ids)
       |> assign(:selected_article_id, article.id)
       |> assign(:selected_article, article)
-      |> load_sidebar(user)
       |> load_articles(user, preserve_selected: true)
 
     {:noreply, socket}
@@ -1191,8 +1204,13 @@ defmodule IcarurssWeb.ReaderLive do
     user = socket.assigns.current_scope.user
     _count = Reader.mark_all_read_for_user(user, reader_scope_opts(socket.assigns))
 
+    opened_unread_article_ids =
+      socket.assigns.opened_unread_article_ids
+      |> MapSet.difference(MapSet.new(socket.assigns.article_ids_in_view))
+
     socket =
       socket
+      |> assign(:opened_unread_article_ids, opened_unread_article_ids)
       |> load_sidebar(user)
       |> load_articles(user, preserve_selected: true)
 
@@ -1290,7 +1308,6 @@ defmodule IcarurssWeb.ReaderLive do
             if(preserve_selected?, do: socket.assigns.selected_article)
       end
 
-    articles = maybe_keep_selected_in_unread(articles, selected_article, socket.assigns.filter)
     article_ids = Enum.map(articles, & &1.id)
 
     previous_ids =
@@ -1340,17 +1357,9 @@ defmodule IcarurssWeb.ReaderLive do
     end
   end
 
-  defp maybe_keep_selected_in_unread(articles, nil, _filter), do: articles
-
-  defp maybe_keep_selected_in_unread(articles, selected_article, :unread) do
-    if Enum.any?(articles, &(&1.id == selected_article.id)) do
-      articles
-    else
-      [selected_article | articles]
-    end
+  defp visually_unread?(article, opened_unread_article_ids) do
+    !article.is_read and !MapSet.member?(opened_unread_article_ids, article.id)
   end
-
-  defp maybe_keep_selected_in_unread(articles, _selected_article, _filter), do: articles
 
   defp parse_filter("unread"), do: :unread
   defp parse_filter("starred"), do: :starred

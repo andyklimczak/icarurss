@@ -78,11 +78,36 @@ const ReaderChrome = {
   },
 }
 
+const ArticleListItem = {
+  mounted() {
+    this.onClick = (event) => {
+      if (event.button !== 0) {
+        return
+      }
+
+      if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
+        event.stopPropagation()
+        return
+      }
+
+      event.preventDefault()
+      event.stopPropagation()
+      this.pushEvent("select_article", {id: this.el.dataset.articleId})
+    }
+
+    this.el.addEventListener("click", this.onClick)
+  },
+
+  destroyed() {
+    this.el.removeEventListener("click", this.onClick)
+  },
+}
+
 const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
   params: {_csrf_token: csrfToken},
-  hooks: {ReaderChrome, ...colocatedHooks},
+  hooks: {ArticleListItem, ReaderChrome, ...colocatedHooks},
 })
 
 // Show progress bar on live navigation and form submits

@@ -43,7 +43,8 @@ defmodule IcarurssWeb.ReaderLiveTest do
       assert has_element?(view, "#article-reader")
     end
 
-    test "selecting an article marks it as read", %{conn: conn} do
+    test "selecting an article keeps it unread until mark all read and clears unread styling",
+         %{conn: conn} do
       user = user_fixture()
       feed = feed_fixture(user)
       article = article_fixture(user, feed, %{is_read: false})
@@ -53,12 +54,15 @@ defmodule IcarurssWeb.ReaderLiveTest do
         |> log_in_user(user)
         |> live(~p"/")
 
+      assert has_element?(view, "#article-unread-indicator-#{article.id}")
+
       view
-      |> element(~s(button[phx-click="select_article"][phx-value-id="#{article.id}"]))
+      |> element("#articles-#{article.id}")
       |> render_click()
 
-      assert Reader.get_article_for_user!(user, article.id).is_read
+      refute Reader.get_article_for_user!(user, article.id).is_read
       assert has_element?(view, "#article-content")
+      refute has_element?(view, "#article-unread-indicator-#{article.id}")
     end
 
     test "overlay reader mode opens and dismisses article panel", %{conn: conn} do
@@ -90,7 +94,24 @@ defmodule IcarurssWeb.ReaderLiveTest do
       |> render_click()
 
       refute has_element?(view, "#article-overlay")
-      refute has_element?(view, "#articles-#{article.id}")
+      assert has_element?(view, "#articles-#{article.id}")
+      refute has_element?(view, "#article-unread-indicator-#{article.id}")
+    end
+
+    test "article rows expose article links for native browser tab actions", %{conn: conn} do
+      user = user_fixture()
+      feed = feed_fixture(user)
+      article = article_fixture(user, feed, %{url: "https://example.com/articles/native-open"})
+
+      {:ok, view, _html} =
+        conn
+        |> log_in_user(user)
+        |> live(~p"/")
+
+      assert has_element?(
+               view,
+               ~s(a#articles-#{article.id}[href="https://example.com/articles/native-open"][phx-hook="ArticleListItem"])
+             )
     end
 
     test "renders article timestamps in the user's configured timezone", %{conn: conn} do
@@ -202,7 +223,7 @@ defmodule IcarurssWeb.ReaderLiveTest do
       assert has_element?(view, ~s(#sidebar-feed-#{feed.id}[title="upstream timeout"]))
     end
 
-    test "selected unread article stays visible until another article is selected", %{conn: conn} do
+    test "opened unread articles stay in the unread list until mark all read", %{conn: conn} do
       user = user_fixture()
       feed = feed_fixture(user)
       first_article = article_fixture(user, feed, %{is_read: false})
@@ -217,16 +238,20 @@ defmodule IcarurssWeb.ReaderLiveTest do
       |> element("#articles-#{first_article.id}")
       |> render_click()
 
-      assert Reader.get_article_for_user!(user, first_article.id).is_read
+      refute Reader.get_article_for_user!(user, first_article.id).is_read
       assert has_element?(view, "#articles-#{first_article.id}")
+      refute has_element?(view, "#article-unread-indicator-#{first_article.id}")
+      assert has_element?(view, "#article-unread-indicator-#{second_article.id}")
 
       view
       |> element("#articles-#{second_article.id}")
       |> render_click()
 
-      assert Reader.get_article_for_user!(user, second_article.id).is_read
-      refute has_element?(view, "#articles-#{first_article.id}")
+      refute Reader.get_article_for_user!(user, second_article.id).is_read
+      assert has_element?(view, "#articles-#{first_article.id}")
       assert has_element?(view, "#articles-#{second_article.id}")
+      refute has_element?(view, "#article-unread-indicator-#{first_article.id}")
+      refute has_element?(view, "#article-unread-indicator-#{second_article.id}")
     end
 
     test "mark all read applies to currently selected feed", %{conn: conn} do
@@ -254,6 +279,14 @@ defmodule IcarurssWeb.ReaderLiveTest do
       assert Reader.get_article_for_user!(user, article_a1.id).is_read
       assert Reader.get_article_for_user!(user, article_a2.id).is_read
       refute Reader.get_article_for_user!(user, article_b.id).is_read
+      refute has_element?(view, "#articles-#{article_a1.id}")
+      refute has_element?(view, "#articles-#{article_a2.id}")
+
+      view
+      |> element("#sidebar-feed-#{feed_b.id}")
+      |> render_click()
+
+      assert has_element?(view, "#articles-#{article_b.id}")
     end
 
     test "add feed modal discovers candidates and subscribes", %{conn: conn} do

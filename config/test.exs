@@ -10,6 +10,7 @@ config :bcrypt_elixir, :log_rounds, 1
 # Run `mix help test` for more information.
 config :icarurss, Icarurss.Repo,
   database: Path.expand("../data/icarurss_test.db", __DIR__),
+  busy_timeout: 5_000,
   pool_size: 5,
   pool: Ecto.Adapters.SQL.Sandbox
 
