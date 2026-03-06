@@ -115,7 +115,13 @@ Open:
 ### 5. Create first admin user (one time)
 
 ```bash
-docker compose exec app mix users.new
+docker compose exec -e PHX_SERVER=false app mix users.new
+```
+
+If the app container is not running, use:
+
+```bash
+docker compose run --rm -e PHX_SERVER=false app mix users.new
 ```
 
 ### 6. Upgrades (no tinkering)
