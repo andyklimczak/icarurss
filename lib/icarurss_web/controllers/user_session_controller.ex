@@ -28,7 +28,6 @@ defmodule IcarurssWeb.UserSessionController do
 
   def update_password(conn, %{"user" => user_params} = params) do
     user = conn.assigns.current_scope.user
-    true = Accounts.sudo_mode?(user)
 
     case Accounts.update_user_password(user, user_params, require_current_password: true) do
       {:ok, {_user, expired_tokens}} ->

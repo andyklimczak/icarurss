@@ -1,8 +1,6 @@
 defmodule IcarurssWeb.UserLive.Settings do
   use IcarurssWeb, :live_view
 
-  on_mount {IcarurssWeb.UserAuth, :require_sudo_mode}
-
   alias Icarurss.Accounts
   alias Icarurss.Reader
 
