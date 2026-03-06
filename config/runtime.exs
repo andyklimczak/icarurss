@@ -5,6 +5,32 @@ env_truthy? = fn
   value -> String.downcase(value) in ["1", "true", "yes", "on"]
 end
 
+positive_integer_env = fn key, default ->
+  case System.get_env(key) do
+    nil ->
+      default
+
+    value ->
+      case Integer.parse(value) do
+        {parsed, ""} when parsed > 0 -> parsed
+        _ -> default
+      end
+  end
+end
+
+non_negative_integer_env = fn key, default ->
+  case System.get_env(key) do
+    nil ->
+      default
+
+    value ->
+      case Integer.parse(value) do
+        {parsed, ""} when parsed >= 0 -> parsed
+        _ -> default
+      end
+  end
+end
+
 # config/runtime.exs is executed for all environments, including
 # during releases. It is executed after compilation and before the
 # system starts, so it is typically used to load production configuration
@@ -43,9 +69,32 @@ if config_env() == :prod do
       For example: /etc/icarurss/data/icarurss_prod.db
       """
 
+  sqlite_busy_timeout = positive_integer_env.("SQLITE_BUSY_TIMEOUT_MS", 5_000)
+  pool_size = positive_integer_env.("POOL_SIZE", 5)
+  feed_refresh_concurrency = positive_integer_env.("FEED_REFRESH_CONCURRENCY", 1)
+  feed_refresh_spacing_ms = non_negative_integer_env.("FEED_REFRESH_SPACING_MS", 1_000)
+  feed_fetch_connect_timeout = positive_integer_env.("FEED_FETCH_CONNECT_TIMEOUT_MS", 5_000)
+  feed_fetch_pool_timeout = positive_integer_env.("FEED_FETCH_POOL_TIMEOUT_MS", 5_000)
+  feed_fetch_receive_timeout = positive_integer_env.("FEED_FETCH_RECEIVE_TIMEOUT_MS", 10_000)
+  feed_fetch_max_retries = non_negative_integer_env.("FEED_FETCH_MAX_RETRIES", 0)
+
   config :icarurss, Icarurss.Repo,
     database: database_path,
-    pool_size: String.to_integer(System.get_env("POOL_SIZE") || "5")
+    busy_timeout: sqlite_busy_timeout,
+    pool_size: pool_size
+
+  config :icarurss, :feed_fetch,
+    connect_timeout: feed_fetch_connect_timeout,
+    max_retries: feed_fetch_max_retries,
+    pool_timeout: feed_fetch_pool_timeout,
+    receive_timeout: feed_fetch_receive_timeout,
+    retry: feed_fetch_max_retries > 0
+
+  config :icarurss, :feed_refresh,
+    concurrency: feed_refresh_concurrency,
+    spacing_ms: feed_refresh_spacing_ms
+
+  config :icarurss, Oban, queues: [feed_refresh: feed_refresh_concurrency]
 
   # The secret key base is used to sign/encrypt cookies and other secrets.
   # A default value is used in config/dev.exs and config/test.exs but you

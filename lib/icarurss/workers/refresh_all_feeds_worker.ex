@@ -19,12 +19,21 @@ defmodule Icarurss.Workers.RefreshAllFeedsWorker do
         _ -> 5_000
       end
 
+    spacing_ms =
+      Application.get_env(:icarurss, :feed_refresh, [])
+      |> Keyword.get(:spacing_ms, 1_000)
+
+    scheduled_at = DateTime.utc_now()
+
     Reader.list_all_feed_ids(limit: max_count)
-    |> Enum.each(fn feed_id ->
+    |> Enum.with_index()
+    |> Enum.map(fn {feed_id, index} ->
       %{feed_id: feed_id}
-      |> RefreshFeedWorker.new()
-      |> Oban.insert()
+      |> RefreshFeedWorker.new(
+        scheduled_at: DateTime.add(scheduled_at, index * spacing_ms, :millisecond)
+      )
     end)
+    |> Oban.insert_all()
 
     :ok
   end

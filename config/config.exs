@@ -26,6 +26,16 @@ config :icarurss,
   registration_enabled: false,
   feed_source: Icarurss.Reader.FeedSource.ReqSource
 
+config :icarurss, :feed_fetch,
+  connect_timeout: 5_000,
+  pool_timeout: 5_000,
+  receive_timeout: 10_000,
+  retry: false
+
+config :icarurss, :feed_refresh,
+  concurrency: 1,
+  spacing_ms: 1_000
+
 config :icarurss, Oban,
   repo: Icarurss.Repo,
   engine: Oban.Engines.Lite,
@@ -36,7 +46,7 @@ config :icarurss, Oban,
      ]},
     {Oban.Plugins.Pruner, max_age: 60 * 60 * 24 * 7}
   ],
-  queues: [feed_refresh: 5]
+  queues: [feed_refresh: 1]
 
 # Configure the endpoint
 config :icarurss, IcarurssWeb.Endpoint,

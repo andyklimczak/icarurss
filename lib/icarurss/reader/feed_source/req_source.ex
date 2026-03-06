@@ -41,7 +41,7 @@ defmodule Icarurss.Reader.FeedSource.ReqSource do
   end
 
   defp fetch(url) do
-    case Req.get(url: url, headers: [{"user-agent", @user_agent}]) do
+    case Req.get(req_options(url)) do
       {:ok, %Req.Response{status: status} = response} when status in 200..299 ->
         {:ok, response}
 
@@ -51,6 +51,20 @@ defmodule Icarurss.Reader.FeedSource.ReqSource do
       {:error, error} ->
         {:error, "Request error: #{Exception.message(error)}"}
     end
+  end
+
+  defp req_options(url) do
+    fetch_config = Application.get_env(:icarurss, :feed_fetch, [])
+
+    [
+      url: url,
+      headers: [{"user-agent", @user_agent}],
+      connect_options: [timeout: Keyword.get(fetch_config, :connect_timeout, 5_000)],
+      pool_timeout: Keyword.get(fetch_config, :pool_timeout, 5_000),
+      receive_timeout: Keyword.get(fetch_config, :receive_timeout, 10_000),
+      retry: Keyword.get(fetch_config, :retry, false),
+      max_retries: Keyword.get(fetch_config, :max_retries, 0)
+    ]
   end
 
   defp normalize_url(url_input) do
