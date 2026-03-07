@@ -219,13 +219,18 @@ defmodule IcarurssWeb.UserLive.SettingsTest do
 
       lv
       |> form("#reader_settings_form", %{
-        "reader_setting" => %{"timezone" => "America/New_York", "article_open_mode" => "new_tab"}
+        "reader_setting" => %{
+          "timezone" => "America/New_York",
+          "article_open_mode" => "new_tab",
+          "article_list_density" => "minimal"
+        }
       })
       |> render_submit()
 
       setting = Reader.get_or_create_reader_setting(user)
       assert setting.timezone == "America/New_York"
       assert setting.article_open_mode == :new_tab
+      assert setting.article_list_density == :minimal
     end
 
     test "renders timezone dropdown options", %{conn: conn} do
@@ -235,6 +240,8 @@ defmodule IcarurssWeb.UserLive.SettingsTest do
       assert html =~ "reader_setting_timezone"
       assert html =~ "UTC"
       assert html =~ "America/New_York"
+      assert html =~ "reader_setting_article_list_density"
+      assert html =~ "Minimal"
     end
 
     test "renders validation errors for invalid timezone when posted directly", %{conn: conn} do
@@ -244,7 +251,8 @@ defmodule IcarurssWeb.UserLive.SettingsTest do
         render_submit(lv, "update_reader_settings", %{
           "reader_setting" => %{
             "timezone" => "Not/A_Real_Zone",
-            "article_open_mode" => "three_column"
+            "article_open_mode" => "three_column",
+            "article_list_density" => "comfortable"
           }
         })
 

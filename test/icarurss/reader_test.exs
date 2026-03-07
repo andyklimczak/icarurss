@@ -18,21 +18,24 @@ defmodule Icarurss.ReaderTest do
       assert setting.user_id == user.id
       assert setting.timezone == "UTC"
       assert setting.article_open_mode == :three_column
+      assert setting.article_list_density == :comfortable
 
       assert setting.id == Reader.get_or_create_reader_setting(user).id
     end
 
-    test "update_reader_setting/2 updates timezone and mode" do
+    test "update_reader_setting/2 updates timezone, mode, and article density" do
       user = user_fixture()
 
       assert {:ok, %Setting{} = setting} =
                Reader.update_reader_setting(user, %{
                  "timezone" => "America/New_York",
-                 "article_open_mode" => "new_tab"
+                 "article_open_mode" => "new_tab",
+                 "article_list_density" => "minimal"
                })
 
       assert setting.timezone == "America/New_York"
       assert setting.article_open_mode == :new_tab
+      assert setting.article_list_density == :minimal
     end
   end
 

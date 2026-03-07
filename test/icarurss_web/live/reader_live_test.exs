@@ -36,11 +36,35 @@ defmodule IcarurssWeb.ReaderLiveTest do
       assert has_element?(view, "#add-feed-button")
       assert has_element?(view, "#refresh-feeds-button")
       assert has_element?(view, "#reader-search-input")
+      assert has_element?(view, "#article-list-density-toggle")
+      assert has_element?(view, "#article-list-density-comfortable-button[aria-pressed=\"true\"]")
       assert has_element?(view, "#mark-visible-read-button")
       assert has_element?(view, "#sidebar-filter-unread")
       assert has_element?(view, "#reader-shell[phx-hook=\"ReaderChrome\"]")
-      assert has_element?(view, "#articles")
+      assert has_element?(view, "#articles[data-density=\"comfortable\"]")
       assert has_element?(view, "#article-reader")
+    end
+
+    test "article list density toggle switches to minimal mode and persists", %{conn: conn} do
+      user = user_fixture()
+      feed = feed_fixture(user, %{title: "Hacker News"})
+      article = article_fixture(user, feed, %{title: "Compact row"})
+
+      {:ok, view, _html} =
+        conn
+        |> log_in_user(user)
+        |> live(~p"/")
+
+      refute has_element?(view, "#article-feed-chip-#{article.id}")
+
+      view
+      |> element("#article-list-density-minimal-button")
+      |> render_click()
+
+      assert Reader.get_or_create_reader_setting(user).article_list_density == :minimal
+      assert has_element?(view, "#articles[data-density=\"minimal\"]")
+      assert has_element?(view, "#article-list-density-minimal-button[aria-pressed=\"true\"]")
+      assert has_element?(view, "#article-feed-chip-#{article.id}")
     end
 
     test "selecting an article keeps it unread until mark all read and clears unread styling",

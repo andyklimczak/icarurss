@@ -8,6 +8,10 @@ defmodule Icarurss.Reader.Setting do
     field :timezone, :string, default: "UTC"
     field :article_open_mode, Ecto.Enum, values: [:three_column, :new_tab], default: :three_column
 
+    field :article_list_density, Ecto.Enum,
+      values: [:comfortable, :minimal],
+      default: :comfortable
+
     belongs_to :user, User
 
     timestamps(type: :utc_datetime)
@@ -15,8 +19,8 @@ defmodule Icarurss.Reader.Setting do
 
   def changeset(setting, attrs) do
     setting
-    |> cast(attrs, [:user_id, :timezone, :article_open_mode])
-    |> validate_required([:user_id, :timezone, :article_open_mode])
+    |> cast(attrs, [:user_id, :timezone, :article_open_mode, :article_list_density])
+    |> validate_required([:user_id, :timezone, :article_open_mode, :article_list_density])
     |> validate_length(:timezone, min: 2, max: 100)
     |> validate_timezone()
     |> unique_constraint(:user_id)

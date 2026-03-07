@@ -95,6 +95,15 @@ defmodule IcarurssWeb.UserLive.Settings do
                   {"Overlay reader (2 columns + panel)", :new_tab}
                 ]}
               />
+              <.input
+                field={@reader_settings_form[:article_list_density]}
+                type="select"
+                label="Article List Density"
+                options={[
+                  {"Comfortable", :comfortable},
+                  {"Minimal", :minimal}
+                ]}
+              />
               <.button variant="primary" phx-disable-with="Saving...">
                 Save Reader Settings
               </.button>

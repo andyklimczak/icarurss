@@ -23,6 +23,7 @@ defmodule IcarurssWeb.ReaderLive do
       |> assign(:selected_article, nil)
       |> assign(:reader_timezone, reader_setting.timezone)
       |> assign(:article_open_mode, reader_setting.article_open_mode)
+      |> assign(:article_list_density, reader_setting.article_list_density)
       |> assign(:show_new_folder_modal, false)
       |> assign(:new_folder_form, to_form(%{"name" => ""}, as: :new_folder))
       |> assign(:editing_folder_id, nil)
@@ -123,7 +124,32 @@ defmodule IcarurssWeb.ReaderLive do
             />
           </.form>
 
-          <div class="flex justify-start md:justify-end">
+          <div class="flex flex-wrap items-center justify-start gap-2 md:justify-end">
+            <div
+              id="article-list-density-toggle"
+              class="inline-flex items-center rounded-lg border border-base-300 bg-base-100 p-1 shadow-sm"
+            >
+              <button
+                id="article-list-density-comfortable-button"
+                type="button"
+                phx-click="set_article_list_density"
+                phx-value-density="comfortable"
+                aria-pressed={to_string(@article_list_density == :comfortable)}
+                class={article_list_density_button_class(@article_list_density == :comfortable)}
+              >
+                Comfortable
+              </button>
+              <button
+                id="article-list-density-minimal-button"
+                type="button"
+                phx-click="set_article_list_density"
+                phx-value-density="minimal"
+                aria-pressed={to_string(@article_list_density == :minimal)}
+                class={article_list_density_button_class(@article_list_density == :minimal)}
+              >
+                Minimal
+              </button>
+            </div>
             <button
               id="mark-visible-read-button"
               type="button"
@@ -435,7 +461,12 @@ defmodule IcarurssWeb.ReaderLive do
               </button>
             </div>
 
-            <div id="articles" phx-update="stream" class="divide-y divide-base-300">
+            <div
+              id="articles"
+              phx-update="stream"
+              data-density={@article_list_density}
+              class="divide-y divide-base-300"
+            >
               <div
                 id="articles-empty-state"
                 class="hidden p-4 text-sm text-base-content/70 only:block"
@@ -450,52 +481,23 @@ defmodule IcarurssWeb.ReaderLive do
                 phx-value-id={article.id}
                 phx-hook="ArticleListItem"
                 data-article-id={article.id}
-                class={[
-                  "block w-full p-3 text-left transition hover:bg-base-300/60",
-                  visually_unread?(article, @opened_unread_article_ids) &&
-                    "bg-sky-50/70 dark:bg-sky-950/20",
-                  MapSet.member?(@highlight_article_ids, article.id) &&
-                    "bg-emerald-50 dark:bg-emerald-900/30",
-                  @selected_article_id == article.id && "bg-base-300"
-                ]}
+                data-density={@article_list_density}
+                class={
+                  article_row_class(
+                    article,
+                    @article_list_density,
+                    @opened_unread_article_ids,
+                    @highlight_article_ids,
+                    @selected_article_id
+                  )
+                }
               >
-                <div class="flex items-start gap-3">
-                  <%= if article.feed.favicon_url do %>
-                    <img src={article.feed.favicon_url} alt="" class="mt-1 size-5 rounded" />
-                  <% else %>
-                    <span class="mt-1 rounded bg-base-300 p-1 text-base-content/80">
-                      <.icon name="hero-rss" class="size-3" />
-                    </span>
-                  <% end %>
-                  <div class="min-w-0 flex-1">
-                    <div class="flex items-center gap-2">
-                      <span
-                        :if={visually_unread?(article, @opened_unread_article_ids)}
-                        id={"article-unread-indicator-#{article.id}"}
-                        class="inline-block size-2 rounded-full bg-blue-500"
-                      >
-                      </span>
-                      <p class={[
-                        "truncate text-sm text-base-content",
-                        visually_unread?(article, @opened_unread_article_ids) &&
-                          "font-semibold",
-                        !visually_unread?(article, @opened_unread_article_ids) &&
-                          "font-medium"
-                      ]}>
-                        {article.title}
-                      </p>
-                    </div>
-                    <p class="mt-1 text-xs text-base-content/70">
-                      {format_datetime(
-                        article.published_at || article.inserted_at,
-                        @reader_timezone
-                      )}
-                    </p>
-                    <p class="text-xs text-base-content/70">
-                      {article.feed.title || article.feed.base_url || article.feed.site_url}
-                    </p>
-                  </div>
-                </div>
+                <.article_list_item_content
+                  article={article}
+                  article_list_density={@article_list_density}
+                  opened_unread_article_ids={@opened_unread_article_ids}
+                  reader_timezone={@reader_timezone}
+                />
               </a>
             </div>
           </section>
@@ -1218,6 +1220,28 @@ defmodule IcarurssWeb.ReaderLive do
   end
 
   @impl true
+  def handle_event("set_article_list_density", %{"density" => density}, socket) do
+    user = socket.assigns.current_scope.user
+
+    case density do
+      density when density in ["comfortable", "minimal"] ->
+        case Reader.update_reader_setting(user, %{"article_list_density" => density}) do
+          {:ok, reader_setting} ->
+            {:noreply,
+             socket
+             |> assign(:article_list_density, reader_setting.article_list_density)
+             |> load_articles(user, preserve_selected: true)}
+
+          {:error, _changeset} ->
+            {:noreply, put_flash(socket, :error, "Could not update article list density.")}
+        end
+
+      _ ->
+        {:noreply, socket}
+    end
+  end
+
+  @impl true
   def handle_event("search", %{"search" => %{"q" => query}}, socket) do
     user = socket.assigns.current_scope.user
 
@@ -1279,6 +1303,99 @@ defmodule IcarurssWeb.ReaderLive do
         <div class="text-center">
           <.icon name="hero-newspaper" class="mx-auto size-10" />
           <p class="mt-2 text-sm">Select an article to read</p>
+        </div>
+      </div>
+    <% end %>
+    """
+  end
+
+  attr :article, :map, required: true
+  attr :article_list_density, :atom, required: true
+  attr :opened_unread_article_ids, :any, required: true
+  attr :reader_timezone, :string, required: true
+
+  defp article_list_item_content(assigns) do
+    ~H"""
+    <%= if @article_list_density == :minimal do %>
+      <div class="flex items-center gap-3">
+        <div class="flex min-w-0 flex-1 items-center gap-2.5">
+          <span
+            :if={visually_unread?(@article, @opened_unread_article_ids)}
+            id={"article-unread-indicator-#{@article.id}"}
+            class="inline-block size-2 shrink-0 rounded-full bg-blue-500"
+          >
+          </span>
+          <span
+            :if={!visually_unread?(@article, @opened_unread_article_ids)}
+            class="inline-block size-2 shrink-0 rounded-full bg-transparent"
+            aria-hidden="true"
+          >
+          </span>
+          <span
+            id={"article-feed-chip-#{@article.id}"}
+            data-role="article-feed-chip"
+            class="inline-flex max-w-40 shrink-0 items-center gap-1.5 rounded-full border border-base-300 bg-base-100/90 px-2 py-1 text-[11px] leading-none text-base-content/70"
+          >
+            <%= if @article.feed.favicon_url do %>
+              <img src={@article.feed.favicon_url} alt="" class="size-3 rounded-sm" />
+            <% else %>
+              <span class="rounded bg-base-300 p-0.5 text-base-content/80">
+                <.icon name="hero-rss" class="size-2.5" />
+              </span>
+            <% end %>
+            <span class="truncate">{article_feed_label(@article.feed)}</span>
+          </span>
+          <p class={[
+            "min-w-0 flex-1 truncate text-[13px] text-base-content",
+            visually_unread?(@article, @opened_unread_article_ids) && "font-semibold",
+            !visually_unread?(@article, @opened_unread_article_ids) && "font-medium"
+          ]}>
+            {@article.title}
+          </p>
+        </div>
+        <p class="shrink-0 whitespace-nowrap text-[11px] text-base-content/60">
+          {format_article_list_datetime(
+            @article.published_at || @article.inserted_at,
+            @reader_timezone,
+            @article_list_density
+          )}
+        </p>
+      </div>
+    <% else %>
+      <div class="flex items-start gap-3">
+        <%= if @article.feed.favicon_url do %>
+          <img src={@article.feed.favicon_url} alt="" class="mt-1 size-5 rounded" />
+        <% else %>
+          <span class="mt-1 rounded bg-base-300 p-1 text-base-content/80">
+            <.icon name="hero-rss" class="size-3" />
+          </span>
+        <% end %>
+        <div class="min-w-0 flex-1">
+          <div class="flex items-center gap-2">
+            <span
+              :if={visually_unread?(@article, @opened_unread_article_ids)}
+              id={"article-unread-indicator-#{@article.id}"}
+              class="inline-block size-2 rounded-full bg-blue-500"
+            >
+            </span>
+            <p class={[
+              "truncate text-sm text-base-content",
+              visually_unread?(@article, @opened_unread_article_ids) && "font-semibold",
+              !visually_unread?(@article, @opened_unread_article_ids) && "font-medium"
+            ]}>
+              {@article.title}
+            </p>
+          </div>
+          <p class="mt-1 text-xs text-base-content/70">
+            {format_article_list_datetime(
+              @article.published_at || @article.inserted_at,
+              @reader_timezone,
+              @article_list_density
+            )}
+          </p>
+          <p class="text-xs text-base-content/70">
+            {article_feed_label(@article.feed)}
+          </p>
         </div>
       </div>
     <% end %>
@@ -1361,6 +1478,23 @@ defmodule IcarurssWeb.ReaderLive do
     !article.is_read and !MapSet.member?(opened_unread_article_ids, article.id)
   end
 
+  defp article_row_class(
+         article,
+         article_list_density,
+         opened_unread_article_ids,
+         highlight_article_ids,
+         selected_article_id
+       ) do
+    [
+      "block w-full text-left transition hover:bg-base-300/60",
+      article_list_density == :minimal && "px-3 py-2",
+      article_list_density != :minimal && "p-3",
+      visually_unread?(article, opened_unread_article_ids) && "bg-sky-50/70 dark:bg-sky-950/20",
+      MapSet.member?(highlight_article_ids, article.id) && "bg-emerald-50 dark:bg-emerald-900/30",
+      selected_article_id == article.id && "bg-base-300"
+    ]
+  end
+
   defp parse_filter("unread"), do: :unread
   defp parse_filter("starred"), do: :starred
   defp parse_filter(_), do: :all
@@ -1396,6 +1530,18 @@ defmodule IcarurssWeb.ReaderLive do
 
   defp article_list_layout_class(_article_open_mode) do
     "h-full overflow-y-auto border-b border-base-300 bg-base-200 lg:border-b-0 lg:border-r"
+  end
+
+  defp article_list_density_button_class(active?) do
+    [
+      "rounded-md px-3 py-1.5 text-xs font-medium transition",
+      active? && "bg-base-300 text-base-content shadow-sm",
+      !active? && "text-base-content/70 hover:bg-base-200 hover:text-base-content"
+    ]
+  end
+
+  defp article_feed_label(feed) do
+    feed.title || feed.base_url || feed.site_url || "Unknown feed"
   end
 
   defp sidebar_item_class(active?, last_refresh_error) do
@@ -1445,6 +1591,51 @@ defmodule IcarurssWeb.ReaderLive do
     dt
     |> DateTime.from_naive!("Etc/UTC")
     |> format_datetime(timezone)
+  end
+
+  defp format_article_list_datetime(nil, _timezone, _density), do: "Unknown date"
+
+  defp format_article_list_datetime(datetime, timezone, :minimal) do
+    timezone = normalize_timezone(timezone)
+
+    shifted =
+      case datetime do
+        %DateTime{} = dt ->
+          case DateTime.shift_zone(dt, timezone) do
+            {:ok, shifted_dt} -> shifted_dt
+            _ -> dt
+          end
+
+        %NaiveDateTime{} = dt ->
+          dt
+          |> DateTime.from_naive!("Etc/UTC")
+          |> case do
+            %DateTime{} = dt_utc ->
+              case DateTime.shift_zone(dt_utc, timezone) do
+                {:ok, shifted_dt} -> shifted_dt
+                _ -> dt_utc
+              end
+          end
+      end
+
+    now =
+      case DateTime.now(timezone) do
+        {:ok, now_dt} -> now_dt
+        _ -> DateTime.utc_now()
+      end
+
+    format =
+      cond do
+        Date.compare(DateTime.to_date(shifted), DateTime.to_date(now)) == :eq -> "%-I:%M %p"
+        shifted.year == now.year -> "%b %-d %-I:%M %p"
+        true -> "%b %-d, %Y %-I:%M %p"
+      end
+
+    Calendar.strftime(shifted, format)
+  end
+
+  defp format_article_list_datetime(datetime, timezone, _density) do
+    format_datetime(datetime, timezone)
   end
 
   defp normalize_timezone(nil), do: "UTC"
