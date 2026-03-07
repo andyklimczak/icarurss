@@ -9,7 +9,6 @@ defmodule Icarurss.Workers.RefreshAllFeedsWorker do
     unique: [period: 30, fields: [:worker]]
 
   alias Icarurss.Reader
-  alias Icarurss.Workers.RefreshFeedWorker
 
   @impl Oban.Worker
   def perform(%Oban.Job{args: args}) do
@@ -19,21 +18,11 @@ defmodule Icarurss.Workers.RefreshAllFeedsWorker do
         _ -> 5_000
       end
 
-    spacing_ms =
+    max_concurrency =
       Application.get_env(:icarurss, :feed_refresh, [])
-      |> Keyword.get(:spacing_ms, 1_000)
+      |> Keyword.get(:max_concurrency, 1)
 
-    scheduled_at = DateTime.utc_now()
-
-    Reader.list_all_feed_ids(limit: max_count)
-    |> Enum.with_index()
-    |> Enum.map(fn {feed_id, index} ->
-      %{feed_id: feed_id}
-      |> RefreshFeedWorker.new(
-        scheduled_at: DateTime.add(scheduled_at, index * spacing_ms, :millisecond)
-      )
-    end)
-    |> Oban.insert_all()
+    _stats = Reader.refresh_all_feeds(limit: max_count, max_concurrency: max_concurrency)
 
     :ok
   end

@@ -72,7 +72,7 @@ if config_env() == :prod do
   sqlite_busy_timeout = positive_integer_env.("SQLITE_BUSY_TIMEOUT_MS", 5_000)
   pool_size = positive_integer_env.("POOL_SIZE", 5)
   feed_refresh_concurrency = positive_integer_env.("FEED_REFRESH_CONCURRENCY", 1)
-  feed_refresh_spacing_ms = non_negative_integer_env.("FEED_REFRESH_SPACING_MS", 1_000)
+  feed_refresh_max_concurrency = positive_integer_env.("FEED_REFRESH_MAX_CONCURRENCY", 1)
   feed_fetch_connect_timeout = positive_integer_env.("FEED_FETCH_CONNECT_TIMEOUT_MS", 5_000)
   feed_fetch_pool_timeout = positive_integer_env.("FEED_FETCH_POOL_TIMEOUT_MS", 5_000)
   feed_fetch_receive_timeout = positive_integer_env.("FEED_FETCH_RECEIVE_TIMEOUT_MS", 10_000)
@@ -90,9 +90,7 @@ if config_env() == :prod do
     receive_timeout: feed_fetch_receive_timeout,
     retry: feed_fetch_max_retries > 0
 
-  config :icarurss, :feed_refresh,
-    concurrency: feed_refresh_concurrency,
-    spacing_ms: feed_refresh_spacing_ms
+  config :icarurss, :feed_refresh, max_concurrency: feed_refresh_max_concurrency
 
   config :icarurss, Oban, queues: [feed_refresh: feed_refresh_concurrency]
 

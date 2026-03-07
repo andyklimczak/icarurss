@@ -202,40 +202,19 @@ defmodule Icarurss.Reader do
 
   def refresh_user_feeds(%User{} = user, opts \\ []) do
     initial_mark_read? = Keyword.get(opts, :initial_mark_read, false)
-    max_concurrency = Keyword.get(opts, :max_concurrency, 4)
+    max_concurrency = Keyword.get(opts, :max_concurrency, feed_refresh_max_concurrency())
 
     list_feeds(user)
-    |> Task.async_stream(
-      fn feed ->
-        case refresh_feed(feed, initial_mark_read: initial_mark_read?) do
-          {:ok, stats} -> {:ok, stats}
-          {:error, _reason} -> :error
-        end
-      end,
-      timeout: :infinity,
-      max_concurrency: max_concurrency,
-      ordered: false
-    )
-    |> reduce_refresh_results()
+    |> refresh_feeds(initial_mark_read?, max_concurrency)
   end
 
   def refresh_all_feeds(opts \\ []) do
     initial_mark_read? = Keyword.get(opts, :initial_mark_read, false)
-    max_concurrency = Keyword.get(opts, :max_concurrency, 4)
+    max_concurrency = Keyword.get(opts, :max_concurrency, feed_refresh_max_concurrency())
+    limit = Keyword.get(opts, :limit, 5_000)
 
-    Repo.all(Feed)
-    |> Task.async_stream(
-      fn feed ->
-        case refresh_feed(feed, initial_mark_read: initial_mark_read?) do
-          {:ok, stats} -> {:ok, stats}
-          {:error, _reason} -> :error
-        end
-      end,
-      timeout: :infinity,
-      max_concurrency: max_concurrency,
-      ordered: false
-    )
-    |> reduce_refresh_results()
+    Repo.all(from(feed in Feed, order_by: [asc: feed.id], limit: ^limit))
+    |> refresh_feeds(initial_mark_read?, max_concurrency)
   end
 
   def refresh_feed(%Feed{} = feed, opts \\ []) do
@@ -706,6 +685,27 @@ defmodule Icarurss.Reader do
     reason
     |> inspect()
     |> String.slice(0, 500)
+  end
+
+  defp refresh_feeds(feeds, initial_mark_read?, max_concurrency) do
+    feeds
+    |> Task.async_stream(
+      fn feed ->
+        case refresh_feed(feed, initial_mark_read: initial_mark_read?) do
+          {:ok, stats} -> {:ok, stats}
+          {:error, _reason} -> :error
+        end
+      end,
+      timeout: :infinity,
+      max_concurrency: max_concurrency,
+      ordered: false
+    )
+    |> reduce_refresh_results()
+  end
+
+  defp feed_refresh_max_concurrency do
+    Application.get_env(:icarurss, :feed_refresh, [])
+    |> Keyword.get(:max_concurrency, 1)
   end
 
   defp feed_source_module do
