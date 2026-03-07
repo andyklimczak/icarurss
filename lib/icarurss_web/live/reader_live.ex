@@ -124,32 +124,7 @@ defmodule IcarurssWeb.ReaderLive do
             />
           </.form>
 
-          <div class="flex flex-wrap items-center justify-start gap-2 md:justify-end">
-            <div
-              id="article-list-density-toggle"
-              class="inline-flex items-center rounded-lg border border-base-300 bg-base-100 p-1 shadow-sm"
-            >
-              <button
-                id="article-list-density-comfortable-button"
-                type="button"
-                phx-click="set_article_list_density"
-                phx-value-density="comfortable"
-                aria-pressed={to_string(@article_list_density == :comfortable)}
-                class={article_list_density_button_class(@article_list_density == :comfortable)}
-              >
-                Comfortable
-              </button>
-              <button
-                id="article-list-density-minimal-button"
-                type="button"
-                phx-click="set_article_list_density"
-                phx-value-density="minimal"
-                aria-pressed={to_string(@article_list_density == :minimal)}
-                class={article_list_density_button_class(@article_list_density == :minimal)}
-              >
-                Minimal
-              </button>
-            </div>
+          <div class="flex justify-start md:justify-end">
             <button
               id="mark-visible-read-button"
               type="button"
@@ -482,6 +457,9 @@ defmodule IcarurssWeb.ReaderLive do
                 phx-hook="ArticleListItem"
                 data-article-id={article.id}
                 data-density={@article_list_density}
+                data-highlighted={to_string(MapSet.member?(@highlight_article_ids, article.id))}
+                data-selected={to_string(@selected_article_id == article.id)}
+                data-unread={to_string(visually_unread?(article, @opened_unread_article_ids))}
                 class={
                   article_row_class(
                     article,
@@ -1220,28 +1198,6 @@ defmodule IcarurssWeb.ReaderLive do
   end
 
   @impl true
-  def handle_event("set_article_list_density", %{"density" => density}, socket) do
-    user = socket.assigns.current_scope.user
-
-    case density do
-      density when density in ["comfortable", "minimal"] ->
-        case Reader.update_reader_setting(user, %{"article_list_density" => density}) do
-          {:ok, reader_setting} ->
-            {:noreply,
-             socket
-             |> assign(:article_list_density, reader_setting.article_list_density)
-             |> load_articles(user, preserve_selected: true)}
-
-          {:error, _changeset} ->
-            {:noreply, put_flash(socket, :error, "Could not update article list density.")}
-        end
-
-      _ ->
-        {:noreply, socket}
-    end
-  end
-
-  @impl true
   def handle_event("search", %{"search" => %{"q" => query}}, socket) do
     user = socket.assigns.current_scope.user
 
@@ -1489,8 +1445,8 @@ defmodule IcarurssWeb.ReaderLive do
       "block w-full text-left transition hover:bg-base-300/60",
       article_list_density == :minimal && "px-3 py-2",
       article_list_density != :minimal && "p-3",
-      visually_unread?(article, opened_unread_article_ids) && "bg-sky-50/70 dark:bg-sky-950/20",
-      MapSet.member?(highlight_article_ids, article.id) && "bg-emerald-50 dark:bg-emerald-900/30",
+      visually_unread?(article, opened_unread_article_ids) && "bg-info/10",
+      MapSet.member?(highlight_article_ids, article.id) && "bg-success/12",
       selected_article_id == article.id && "bg-base-300"
     ]
   end
@@ -1530,14 +1486,6 @@ defmodule IcarurssWeb.ReaderLive do
 
   defp article_list_layout_class(_article_open_mode) do
     "h-full overflow-y-auto border-b border-base-300 bg-base-200 lg:border-b-0 lg:border-r"
-  end
-
-  defp article_list_density_button_class(active?) do
-    [
-      "rounded-md px-3 py-1.5 text-xs font-medium transition",
-      active? && "bg-base-300 text-base-content shadow-sm",
-      !active? && "text-base-content/70 hover:bg-base-200 hover:text-base-content"
-    ]
   end
 
   defp article_feed_label(feed) do
