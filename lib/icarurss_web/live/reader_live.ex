@@ -141,10 +141,18 @@ defmodule IcarurssWeb.ReaderLive do
         id="reader-shell"
         phx-hook="ReaderChrome"
         data-unread-count={@unread_count}
+        data-layout-mode={layout_mode(@article_open_mode)}
         class="relative h-full min-h-0 w-full overflow-hidden border-y border-base-300 bg-base-100 shadow-sm"
       >
-        <div class={reader_layout_class(@article_open_mode)}>
-          <aside class="h-full overflow-y-auto border-b border-base-300 bg-base-200 p-3 lg:border-b-0 lg:border-r">
+        <div
+          id="reader-layout"
+          data-layout-mode={layout_mode(@article_open_mode)}
+          class="reader-layout h-full min-h-0"
+        >
+          <aside
+            id="reader-sidebar"
+            class="h-full min-h-0 overflow-y-auto border-b border-base-300 bg-base-200 p-3 lg:border-b-0"
+          >
             <h2 class="mb-3 text-xs font-semibold uppercase tracking-wide text-base-content/70">
               Smart Feeds
             </h2>
@@ -394,7 +402,22 @@ defmodule IcarurssWeb.ReaderLive do
             </div>
           </aside>
 
-          <section class={article_list_layout_class(@article_open_mode)}>
+          <div
+            id="sidebar-resizer"
+            data-resizer="sidebar"
+            class="reader-resizer hidden lg:block"
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Resize sidebar"
+            aria-controls="reader-sidebar article-list-panel"
+            tabindex="0"
+          >
+          </div>
+
+          <section
+            id="article-list-panel"
+            class={article_list_layout_class(@article_open_mode)}
+          >
             <div class="border-b border-base-300 bg-base-200 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-base-content/70">
               Articles ({@articles_count})
             </div>
@@ -480,10 +503,23 @@ defmodule IcarurssWeb.ReaderLive do
             </div>
           </section>
 
+          <div
+            :if={@article_open_mode == :three_column}
+            id="reader-pane-resizer"
+            data-resizer="list"
+            class="reader-resizer hidden lg:block"
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Resize article list"
+            aria-controls="article-list-panel article-reader"
+            tabindex="0"
+          >
+          </div>
+
           <section
             :if={@article_open_mode == :three_column}
             id="article-reader"
-            class="h-full overflow-y-auto bg-base-100 p-6"
+            class="h-full min-h-0 overflow-y-auto bg-base-100 p-6"
           >
             <.article_reader_content
               selected_article={@selected_article}
@@ -1472,21 +1508,16 @@ defmodule IcarurssWeb.ReaderLive do
 
   defp parse_optional_id(_), do: nil
 
-  defp reader_layout_class(:new_tab) do
-    "grid h-full grid-cols-1 overflow-hidden lg:grid-cols-[1fr_2fr]"
-  end
-
-  defp reader_layout_class(_article_open_mode) do
-    "grid h-full grid-cols-1 overflow-hidden lg:grid-cols-[1fr_2fr_4fr]"
-  end
-
   defp article_list_layout_class(:new_tab) do
-    "h-full overflow-y-auto border-b border-base-300 bg-base-200 lg:border-b-0"
+    "h-full min-h-0 overflow-y-auto border-b border-base-300 bg-base-200 lg:border-b-0"
   end
 
   defp article_list_layout_class(_article_open_mode) do
-    "h-full overflow-y-auto border-b border-base-300 bg-base-200 lg:border-b-0 lg:border-r"
+    "h-full min-h-0 overflow-y-auto border-b border-base-300 bg-base-200 lg:border-b-0"
   end
+
+  defp layout_mode(:new_tab), do: "new_tab"
+  defp layout_mode(_article_open_mode), do: "three_column"
 
   defp article_feed_label(feed) do
     feed.title || feed.base_url || feed.site_url || "Unknown feed"

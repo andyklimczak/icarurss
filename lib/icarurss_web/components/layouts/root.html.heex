@@ -8,6 +8,24 @@
     <.live_title default="Icarurss" suffix=" · Phoenix Framework">
       {assigns[:page_title]}
     </.live_title>
+    <script>
+      (() => {
+        const storageKey = "icarurss:reader-layout:v1";
+        const rootStyle = document.documentElement.style;
+        const setWidth = (name, value) => {
+          if (Number.isFinite(value)) {
+            rootStyle.setProperty(name, `${value}px`);
+          }
+        };
+
+        try {
+          const saved = JSON.parse(localStorage.getItem(storageKey) || "{}");
+          setWidth("--reader-sidebar-width-new-tab", saved.new_tab?.sidebar);
+          setWidth("--reader-sidebar-width-three-column", saved.three_column?.sidebar);
+          setWidth("--reader-list-width-three-column", saved.three_column?.list);
+        } catch (_error) {}
+      })();
+    </script>
     <link phx-track-static rel="stylesheet" href={~p"/assets/css/app.css"} />
     <script defer phx-track-static type="text/javascript" src={~p"/assets/js/app.js"}>
     </script>

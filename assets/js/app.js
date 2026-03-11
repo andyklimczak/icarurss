@@ -26,6 +26,24 @@ import {hooks as colocatedHooks} from "phoenix-colocated/icarurss"
 import topbar from "../vendor/topbar"
 
 const defaultFaviconHref = "/favicon.ico"
+const readerLayoutStorageKey = "icarurss:reader-layout:v1"
+const desktopReaderLayout = window.matchMedia("(min-width: 1024px)")
+const readerColumnMinimums = {
+  sidebar: 240,
+  list: 320,
+  reader: 360,
+}
+const readerLayoutDefaults = {
+  new_tab: {sidebar: 320},
+  three_column: {sidebar: 280, list: 420},
+}
+const readerCssVariables = {
+  new_tab: {sidebar: "--reader-sidebar-width-new-tab"},
+  three_column: {
+    sidebar: "--reader-sidebar-width-three-column",
+    list: "--reader-list-width-three-column",
+  },
+}
 
 const buildUnreadFavicon = (count) => {
   const badgeText = count > 9 ? "9+" : String(count)
@@ -56,15 +74,276 @@ const setFavicon = (href) => {
 
 const ReaderChrome = {
   mounted() {
+    this.dragState = null
+    this.pointerMove = (event) => this.onPointerMove(event)
+    this.pointerUp = () => this.stopResize()
+    this.handlePointerDown = (event) => this.onPointerDown(event)
+    this.handleDoubleClick = (event) => this.onDoubleClick(event)
+    this.handleKeyDown = (event) => this.onKeyDown(event)
+    this.handleWindowResize = () => this.applyReaderLayout()
+
+    this.el.addEventListener("pointerdown", this.handlePointerDown)
+    this.el.addEventListener("dblclick", this.handleDoubleClick)
+    this.el.addEventListener("keydown", this.handleKeyDown)
+    window.addEventListener("resize", this.handleWindowResize)
+
+    this.applyReaderLayout()
     this.updateFavicon()
   },
 
   updated() {
+    this.applyReaderLayout()
     this.updateFavicon()
   },
 
   destroyed() {
+    this.stopResize()
+    this.el.removeEventListener("pointerdown", this.handlePointerDown)
+    this.el.removeEventListener("dblclick", this.handleDoubleClick)
+    this.el.removeEventListener("keydown", this.handleKeyDown)
+    window.removeEventListener("resize", this.handleWindowResize)
     setFavicon(defaultFaviconHref)
+  },
+
+  onPointerDown(event) {
+    const handle = event.target.closest("[data-resizer]")
+
+    if (!handle || event.button !== 0 || !desktopReaderLayout.matches) {
+      return
+    }
+
+    const mode = this.currentLayoutMode()
+    const widths = this.currentWidths()
+
+    if (!widths) {
+      return
+    }
+
+    event.preventDefault()
+
+    this.dragState = {
+      handle,
+      mode,
+      resizer: handle.dataset.resizer,
+      startX: event.clientX,
+      startWidths: widths,
+    }
+
+    handle.classList.add("is-dragging")
+    document.body.classList.add("reader-is-resizing")
+    window.addEventListener("pointermove", this.pointerMove)
+    window.addEventListener("pointerup", this.pointerUp)
+  },
+
+  onPointerMove(event) {
+    if (!this.dragState) {
+      return
+    }
+
+    const deltaX = event.clientX - this.dragState.startX
+    const nextWidths = {...this.dragState.startWidths}
+
+    if (this.dragState.resizer === "sidebar") {
+      nextWidths.sidebar = this.dragState.startWidths.sidebar + deltaX
+    }
+
+    if (this.dragState.resizer === "list") {
+      nextWidths.list = this.dragState.startWidths.list + deltaX
+    }
+
+    const clampedWidths = this.clampWidths(this.dragState.mode, nextWidths)
+    this.applyWidths(this.dragState.mode, clampedWidths)
+    this.saveWidths(this.dragState.mode, clampedWidths)
+  },
+
+  onDoubleClick(event) {
+    const handle = event.target.closest("[data-resizer]")
+
+    if (!handle) {
+      return
+    }
+
+    const mode = this.currentLayoutMode()
+    const widths = this.clampWidths(mode, this.defaultWidths(mode))
+
+    this.applyWidths(mode, widths)
+    this.saveWidths(mode, widths)
+  },
+
+  onKeyDown(event) {
+    const handle = event.target.closest("[data-resizer]")
+
+    if (!handle || !desktopReaderLayout.matches) {
+      return
+    }
+
+    const keyDirection = {ArrowLeft: -24, ArrowRight: 24}[event.key]
+
+    if (!keyDirection) {
+      return
+    }
+
+    event.preventDefault()
+
+    const mode = this.currentLayoutMode()
+    const widths = this.currentWidths()
+
+    if (!widths) {
+      return
+    }
+
+    const nextWidths = {...widths}
+
+    if (handle.dataset.resizer === "sidebar") {
+      nextWidths.sidebar += keyDirection
+    }
+
+    if (handle.dataset.resizer === "list") {
+      nextWidths.list += keyDirection
+    }
+
+    const clampedWidths = this.clampWidths(mode, nextWidths)
+    this.applyWidths(mode, clampedWidths)
+    this.saveWidths(mode, clampedWidths)
+  },
+
+  stopResize() {
+    if (this.dragState?.handle) {
+      this.dragState.handle.classList.remove("is-dragging")
+    }
+
+    this.dragState = null
+    document.body.classList.remove("reader-is-resizing")
+    window.removeEventListener("pointermove", this.pointerMove)
+    window.removeEventListener("pointerup", this.pointerUp)
+  },
+
+  applyReaderLayout() {
+    const mode = this.currentLayoutMode()
+    const widths = this.clampWidths(mode, this.savedWidths(mode) || this.defaultWidths(mode))
+
+    this.applyWidths(mode, widths)
+    this.saveWidths(mode, widths)
+  },
+
+  applyWidths(mode, widths) {
+    const variables = this.cssVariables(mode)
+
+    this.setRootVariable(variables.sidebar, widths.sidebar)
+
+    if (variables.list) {
+      this.setRootVariable(variables.list, widths.list)
+    }
+  },
+
+  currentWidths() {
+    const mode = this.currentLayoutMode()
+    const defaults = this.defaultWidths(mode)
+    const variables = this.cssVariables(mode)
+
+    return {
+      sidebar: this.resolveWidth(variables.sidebar, defaults.sidebar),
+      list: this.resolveWidth(variables.list, defaults.list),
+    }
+  },
+
+  resolveWidth(variableName, fallback) {
+    if (!variableName) {
+      return fallback
+    }
+
+    const value = Number.parseFloat(getComputedStyle(this.el).getPropertyValue(variableName))
+    return Number.isFinite(value) ? value : fallback
+  },
+
+  clampWidths(mode, widths) {
+    const layout = this.layout()
+
+    if (!layout || !desktopReaderLayout.matches) {
+      return widths
+    }
+
+    const gutter = this.gutterSize()
+    const containerWidth = layout.getBoundingClientRect().width
+    const sidebarMin = readerColumnMinimums.sidebar
+    const listMin = readerColumnMinimums.list
+    const readerMin = readerColumnMinimums.reader
+
+    if (mode === "new_tab") {
+      const maxSidebar = Math.max(sidebarMin, containerWidth - gutter - listMin)
+
+      return {
+        sidebar: this.clamp(widths.sidebar, sidebarMin, maxSidebar),
+      }
+    }
+
+    const maxSidebar = Math.max(sidebarMin, containerWidth - widths.list - readerMin - gutter * 2)
+    const sidebar = this.clamp(widths.sidebar, sidebarMin, maxSidebar)
+    const maxList = Math.max(listMin, containerWidth - sidebar - readerMin - gutter * 2)
+
+    return {
+      sidebar,
+      list: this.clamp(widths.list, listMin, maxList),
+    }
+  },
+
+  defaultWidths(mode) {
+    return {...(readerLayoutDefaults[mode] || readerLayoutDefaults.three_column)}
+  },
+
+  cssVariables(mode) {
+    return readerCssVariables[mode] || readerCssVariables.three_column
+  },
+
+  layout() {
+    return this.el.querySelector("#reader-layout")
+  },
+
+  currentLayoutMode() {
+    return this.el.dataset.layoutMode || this.layout()?.dataset.layoutMode || "three_column"
+  },
+
+  gutterSize() {
+    const value = Number.parseFloat(getComputedStyle(this.el).getPropertyValue("--reader-gutter-size"))
+    return Number.isFinite(value) ? value : 14
+  },
+
+  clamp(value, min, max) {
+    return Math.min(Math.max(value, min), max)
+  },
+
+  setRootVariable(name, value) {
+    if (!name || !Number.isFinite(value)) {
+      return
+    }
+
+    document.documentElement.style.setProperty(name, `${value}px`)
+  },
+
+  savedWidths(mode) {
+    try {
+      const payload = window.localStorage.getItem(readerLayoutStorageKey)
+
+      if (!payload) {
+        return null
+      }
+
+      const parsed = JSON.parse(payload)
+      return parsed?.[mode] || null
+    } catch (_error) {
+      return null
+    }
+  },
+
+  saveWidths(mode, widths) {
+    try {
+      const payload = window.localStorage.getItem(readerLayoutStorageKey)
+      const parsed = payload ? JSON.parse(payload) : {}
+      parsed[mode] = widths
+      window.localStorage.setItem(readerLayoutStorageKey, JSON.stringify(parsed))
+    } catch (_error) {
+      // Ignore storage failures and keep the in-memory layout active.
+    }
   },
 
   updateFavicon() {

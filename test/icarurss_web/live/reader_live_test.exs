@@ -38,8 +38,20 @@ defmodule IcarurssWeb.ReaderLiveTest do
       assert has_element?(view, "#reader-search-input")
       assert has_element?(view, "#mark-visible-read-button")
       assert has_element?(view, "#sidebar-filter-unread")
-      assert has_element?(view, "#reader-shell[phx-hook=\"ReaderChrome\"]")
+
+      assert has_element?(
+               view,
+               "#reader-shell[phx-hook=\"ReaderChrome\"][data-layout-mode=\"three_column\"]"
+             )
+
+      assert has_element?(
+               view,
+               "#reader-layout[data-layout-mode=\"three_column\"]"
+             )
+
       assert has_element?(view, "#articles[data-density=\"comfortable\"]")
+      assert has_element?(view, "#sidebar-resizer[data-resizer=\"sidebar\"]")
+      assert has_element?(view, "#reader-pane-resizer[data-resizer=\"list\"]")
       assert has_element?(view, "#article-reader")
     end
 
@@ -94,6 +106,18 @@ defmodule IcarurssWeb.ReaderLiveTest do
         |> log_in_user(user)
         |> live(~p"/")
 
+      assert has_element?(
+               view,
+               "#reader-shell[data-layout-mode=\"new_tab\"]"
+             )
+
+      assert has_element?(
+               view,
+               "#reader-layout[data-layout-mode=\"new_tab\"]"
+             )
+
+      assert has_element?(view, "#sidebar-resizer[data-resizer=\"sidebar\"]")
+      refute has_element?(view, "#reader-pane-resizer")
       refute has_element?(view, "#article-reader")
       refute has_element?(view, "#article-overlay")
 
