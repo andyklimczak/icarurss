@@ -67,6 +67,22 @@ defmodule IcarurssWeb.ReaderLive do
   end
 
   @impl true
+  def handle_info({:articles_read, %{user_id: user_id}}, socket) do
+    user = socket.assigns.current_scope.user
+
+    if user.id == user_id do
+      socket =
+        socket
+        |> load_sidebar(user)
+        |> load_articles(user, preserve_selected: true)
+
+      {:noreply, socket}
+    else
+      {:noreply, socket}
+    end
+  end
+
+  @impl true
   def handle_info({:feed_refresh_failed, %{user_id: user_id}}, socket) do
     user = socket.assigns.current_scope.user
 

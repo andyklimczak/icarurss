@@ -185,16 +185,22 @@ defmodule Icarurss.ReaderTest do
       assert id == matching.id
     end
 
-    test "mark_article_read/1 and mark_all_read_for_user/2 update read state" do
+    test "mark_article_read/1 and mark_all_read_for_user/2 update read state and broadcast" do
       user = user_fixture()
       feed = feed_fixture(user)
       article_a = article_fixture(user, feed, %{is_read: false})
       article_b = article_fixture(user, feed, %{is_read: false})
 
+      Phoenix.PubSub.subscribe(Icarurss.PubSub, Reader.user_topic(user.id))
+
       assert {:ok, %Article{} = updated_article} = Reader.mark_article_read(article_a)
       assert updated_article.is_read
+      assert_receive {:articles_read, %{user_id: user_id}}
+      assert user_id == user.id
 
       assert 1 == Reader.mark_all_read_for_user(user, feed_id: feed.id, filter: :unread)
+      assert_receive {:articles_read, %{user_id: user_id}}
+      assert user_id == user.id
 
       assert Reader.get_article_for_user!(user, article_b.id).is_read
     end

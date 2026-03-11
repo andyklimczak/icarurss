@@ -329,6 +329,34 @@ defmodule IcarurssWeb.ReaderLiveTest do
       assert has_element?(view, "#articles-#{article_b.id}")
     end
 
+    test "mark all read updates other reader sessions for the same user", %{conn: conn} do
+      user = user_fixture()
+      feed = feed_fixture(user)
+      article = article_fixture(user, feed, %{is_read: false})
+
+      {:ok, source_view, _html} =
+        conn
+        |> log_in_user(user)
+        |> live(~p"/")
+
+      {:ok, replica_view, _html} =
+        build_conn()
+        |> log_in_user(user)
+        |> live(~p"/")
+
+      assert has_element?(replica_view, "#articles-#{article.id}")
+
+      source_view
+      |> element("#mark-visible-read-button")
+      |> render_click()
+
+      assert Reader.get_article_for_user!(user, article.id).is_read
+
+      _ = render(replica_view)
+
+      refute has_element?(replica_view, "#articles-#{article.id}")
+    end
+
     test "add feed modal discovers candidates and subscribes", %{conn: conn} do
       user = user_fixture()
 

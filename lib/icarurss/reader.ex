@@ -351,7 +351,14 @@ defmodule Icarurss.Reader do
   end
 
   def mark_article_read(%Article{} = article) do
-    update_article(article, %{is_read: true})
+    case update_article(article, %{is_read: true}) do
+      {:ok, %Article{} = updated_article} = result ->
+        broadcast_articles_read(updated_article.user_id)
+        result
+
+      {:error, _changeset} = error ->
+        error
+    end
   end
 
   def mark_article_starred(%Article{} = article, starred?) when is_boolean(starred?) do
@@ -365,6 +372,10 @@ defmodule Icarurss.Reader do
       user_id
       |> article_update_scope_query(opts)
       |> Repo.update_all(set: [is_read: true, updated_at: now])
+
+    if count > 0 do
+      broadcast_articles_read(user_id)
+    end
 
     count
   end
@@ -645,6 +656,14 @@ defmodule Icarurss.Reader do
          inserted: stats.inserted,
          updated: stats.updated
        }}
+    )
+  end
+
+  defp broadcast_articles_read(user_id) do
+    Phoenix.PubSub.broadcast(
+      Icarurss.PubSub,
+      user_topic(user_id),
+      {:articles_read, %{user_id: user_id}}
     )
   end
 
