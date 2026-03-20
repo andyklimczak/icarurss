@@ -119,12 +119,19 @@ defmodule Icarurss.ReaderTest do
 
     test "list_articles_for_user/2 supports search against article and feed fields" do
       user = user_fixture()
-      feed = feed_fixture(user, %{title: "Elixir Weekly", base_url: "https://elixirweekly.net"})
+
+      feed =
+        feed_fixture(user, %{
+          title: "Elixir Weekly",
+          feed_url: "https://feeds.elixirweekly.net/feed.xml",
+          base_url: "https://elixirweekly.net"
+        })
 
       matching =
         article_fixture(user, feed, %{
           title: "Phoenix LiveView 1.1",
-          content_html: "<p>Streams!</p>"
+          content_html: "<p>Streams!</p>",
+          url: "https://elixirweekly.net/issues/liveview-1-1"
         })
 
       _non_matching = article_fixture(user, feed, %{title: "Rails News"})
@@ -134,6 +141,18 @@ defmodule Icarurss.ReaderTest do
 
       article_ids =
         Reader.list_articles_for_user(user, search: "elixirweekly")
+        |> Enum.map(& &1.id)
+
+      assert matching.id in article_ids
+
+      article_ids =
+        Reader.list_articles_for_user(user, search: "liveview-1-1")
+        |> Enum.map(& &1.id)
+
+      assert matching.id in article_ids
+
+      article_ids =
+        Reader.list_articles_for_user(user, search: "feeds.elixirweekly.net")
         |> Enum.map(& &1.id)
 
       assert matching.id in article_ids
@@ -176,13 +195,19 @@ defmodule Icarurss.ReaderTest do
       matching =
         article_fixture(user, feed, %{
           title: "Fallback Search Path",
-          content_html: "<p>Safe fallback behavior</p>"
+          content_html: "<p>Safe fallback behavior</p>",
+          url: "https://safe.example.com/posts/fallback-search-path"
         })
 
       Repo.query!("DROP TABLE articles_search")
 
       assert [%Article{id: id}] = Reader.list_articles_for_user(user, search: "fallback")
       assert id == matching.id
+
+      assert [%Article{id: url_id}] =
+               Reader.list_articles_for_user(user, search: "fallback-search-path")
+
+      assert url_id == matching.id
     end
 
     test "mark_article_read/1 and mark_all_read_for_user/2 update read state and broadcast" do

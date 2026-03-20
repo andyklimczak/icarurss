@@ -1279,7 +1279,20 @@ defmodule IcarurssWeb.ReaderLive do
       </div>
 
       <h1 class="text-3xl font-semibold tracking-tight text-base-content">
-        {@selected_article.title}
+        <%= if @selected_article.url do %>
+          <a
+            id="selected-article-title-link"
+            href={@selected_article.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            class="inline-flex items-center gap-2 transition hover:text-primary focus:outline-none focus:ring-2 focus:ring-primary/40"
+          >
+            <span>{@selected_article.title}</span>
+            <.icon name="hero-arrow-top-right-on-square" class="size-5 shrink-0" />
+          </a>
+        <% else %>
+          <span id="selected-article-title">{@selected_article.title}</span>
+        <% end %>
       </h1>
 
       <p class="mt-3 text-sm text-base-content/70">

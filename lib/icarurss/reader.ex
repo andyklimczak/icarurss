@@ -568,7 +568,9 @@ defmodule Icarurss.Reader do
         like(fragment("lower(?)", article.title), ^pattern) or
           like(fragment("lower(coalesce(?, ''))", article.content_html), ^pattern) or
           like(fragment("lower(coalesce(?, ''))", article.summary_html), ^pattern) or
+          like(fragment("lower(coalesce(?, ''))", article.url), ^pattern) or
           like(fragment("lower(coalesce(?, ''))", feed.title), ^pattern) or
+          like(fragment("lower(coalesce(?, ''))", feed.feed_url), ^pattern) or
           like(fragment("lower(coalesce(?, ''))", feed.site_url), ^pattern) or
           like(fragment("lower(coalesce(?, ''))", feed.base_url), ^pattern)
   end
@@ -579,24 +581,36 @@ defmodule Icarurss.Reader do
         maybe_filter_by_search_like(query, search)
 
       fts_query ->
+        pattern = "%#{search}%"
+
+        ranked_search_query =
+          from search_entry in fragment(
+                 """
+                 SELECT rowid AS article_id, bm25(articles_search) AS rank
+                 FROM articles_search
+                 WHERE user_id = ? AND articles_search MATCH ?
+                 """,
+                 ^user_id,
+                 ^fts_query
+               ),
+               select: %{
+                 article_id: field(search_entry, :article_id),
+                 rank: field(search_entry, :rank)
+               }
+
         query =
-          from [article, _feed] in query,
-            join:
-              search_entry in fragment(
-                """
-                SELECT rowid AS article_id, bm25(articles_search) AS rank
-                FROM articles_search
-                WHERE user_id = ? AND articles_search MATCH ?
-                """,
-                ^user_id,
-                ^fts_query
-              ),
-            on: field(search_entry, :article_id) == article.id
+          from [article, feed] in query,
+            left_join: search_entry in subquery(ranked_search_query),
+            on: search_entry.article_id == article.id,
+            where:
+              not is_nil(search_entry.article_id) or
+                like(fragment("lower(coalesce(?, ''))", article.url), ^pattern) or
+                like(fragment("lower(coalesce(?, ''))", feed.feed_url), ^pattern)
 
         prepend_order_by(
           query,
           [article, _feed, search_entry],
-          asc: field(search_entry, :rank),
+          asc: fragment("coalesce(?, 1000000000)", field(search_entry, :rank)),
           desc: article.published_at,
           desc: article.inserted_at
         )

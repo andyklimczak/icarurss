@@ -90,7 +90,41 @@ defmodule IcarurssWeb.ReaderLiveTest do
 
       refute Reader.get_article_for_user!(user, article.id).is_read
       assert has_element?(view, "#article-content")
+
+      assert has_element?(
+               view,
+               ~s(#selected-article-title-link[href="#{article.url}"][target="_blank"])
+             )
+
       refute has_element?(view, "#article-unread-indicator-#{article.id}")
+    end
+
+    test "search filters articles by article URL", %{conn: conn} do
+      user = user_fixture()
+      feed = feed_fixture(user)
+
+      matching =
+        article_fixture(user, feed, %{
+          title: "Phoenix release notes",
+          url: "https://example.com/posts/liveview-search-fix"
+        })
+
+      other = article_fixture(user, feed, %{title: "Unrelated article"})
+
+      {:ok, view, _html} =
+        conn
+        |> log_in_user(user)
+        |> live(~p"/")
+
+      assert has_element?(view, "#articles-#{matching.id}")
+      assert has_element?(view, "#articles-#{other.id}")
+
+      view
+      |> form("#reader-search-form", search: %{q: "liveview-search-fix"})
+      |> render_change()
+
+      assert has_element?(view, "#articles-#{matching.id}")
+      refute has_element?(view, "#articles-#{other.id}")
     end
 
     test "overlay reader mode opens and dismisses article panel", %{conn: conn} do
