@@ -73,6 +73,10 @@ if config_env() == :prod do
   pool_size = positive_integer_env.("POOL_SIZE", 5)
   feed_refresh_concurrency = positive_integer_env.("FEED_REFRESH_CONCURRENCY", 1)
   feed_refresh_max_concurrency = positive_integer_env.("FEED_REFRESH_MAX_CONCURRENCY", 1)
+
+  feed_refresh_spread_window_seconds =
+    non_negative_integer_env.("FEED_REFRESH_SPREAD_WINDOW_SECONDS", 600)
+
   feed_fetch_connect_timeout = positive_integer_env.("FEED_FETCH_CONNECT_TIMEOUT_MS", 5_000)
   feed_fetch_pool_timeout = positive_integer_env.("FEED_FETCH_POOL_TIMEOUT_MS", 5_000)
   feed_fetch_receive_timeout = positive_integer_env.("FEED_FETCH_RECEIVE_TIMEOUT_MS", 10_000)
@@ -90,7 +94,9 @@ if config_env() == :prod do
     receive_timeout: feed_fetch_receive_timeout,
     retry: feed_fetch_max_retries > 0
 
-  config :icarurss, :feed_refresh, max_concurrency: feed_refresh_max_concurrency
+  config :icarurss, :feed_refresh,
+    max_concurrency: feed_refresh_max_concurrency,
+    spread_window_seconds: feed_refresh_spread_window_seconds
 
   config :icarurss, Oban, queues: [feed_refresh: feed_refresh_concurrency]
 

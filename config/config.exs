@@ -32,7 +32,9 @@ config :icarurss, :feed_fetch,
   receive_timeout: 10_000,
   retry: false
 
-config :icarurss, :feed_refresh, max_concurrency: 1
+config :icarurss, :feed_refresh,
+  max_concurrency: 1,
+  spread_window_seconds: 600
 
 config :icarurss, Oban,
   repo: Icarurss.Repo,

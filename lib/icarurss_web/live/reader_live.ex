@@ -937,7 +937,7 @@ defmodule IcarurssWeb.ReaderLive do
 
   @impl true
   def handle_event("refresh_feeds", _params, socket) do
-    case RefreshAllFeedsWorker.new(%{}) |> Oban.insert() do
+    case RefreshAllFeedsWorker.new(%{spread: false}) |> Oban.insert() do
       {:ok, _job} ->
         {:noreply,
          put_flash(socket, :info, "Feed refresh queued. New articles will appear automatically.")}

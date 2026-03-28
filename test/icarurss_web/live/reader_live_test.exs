@@ -472,7 +472,12 @@ defmodule IcarurssWeb.ReaderLiveTest do
       |> element("#refresh-feeds-button")
       |> render_click()
 
-      assert_enqueued(worker: Icarurss.Workers.RefreshAllFeedsWorker, queue: :feed_refresh)
+      assert_enqueued(
+        worker: Icarurss.Workers.RefreshAllFeedsWorker,
+        queue: :feed_refresh,
+        args: %{spread: false}
+      )
+
       assert render(view) =~ "Feed refresh queued"
     end
 
