@@ -4,26 +4,24 @@ defmodule Mix.Tasks.Users.New do
   Creates or updates a user via interactive prompts.
 
       mix users.new
-      mix users.new --as admin_username
   """
 
   use Mix.Task
 
   alias Icarurss.Accounts
-  alias Icarurss.Accounts.User
+  alias Mix.Tasks.Users.Helpers
 
   @impl true
   def run(args) do
-    disable_endpoint_server()
+    Helpers.disable_endpoint_server()
     Mix.Task.run("app.start")
 
-    with {:ok, actor} <- parse_actor(args),
-         :ok <- Accounts.authorize_user_management(actor) do
+    with :ok <- validate_no_args(args) do
       username = prompt_username()
       password = prompt_password()
       role = prompt_role()
 
-      case Accounts.upsert_managed_user(actor, username, password, role) do
+      case Accounts.upsert_managed_user(nil, username, password, role, authorize?: false) do
         {:ok, user} ->
           Mix.shell().info("User saved username=#{user.username} role=#{user.role}.")
 
@@ -39,43 +37,10 @@ defmodule Mix.Tasks.Users.New do
     end
   end
 
-  defp disable_endpoint_server do
-    endpoint_config = Application.get_env(:icarurss, IcarurssWeb.Endpoint, [])
+  defp validate_no_args([]), do: :ok
 
-    Application.put_env(
-      :icarurss,
-      IcarurssWeb.Endpoint,
-      Keyword.put(endpoint_config, :server, false)
-    )
-  end
-
-  defp parse_actor(args) do
-    {opts, _argv, invalid} = OptionParser.parse(args, strict: [as: :string])
-
-    case invalid do
-      [] ->
-        resolve_actor(opts[:as])
-
-      _ ->
-        {:error, "Invalid options. Usage: mix users.new [--as admin_username]"}
-    end
-  end
-
-  defp resolve_actor(nil), do: {:ok, nil}
-
-  defp resolve_actor(actor_username) when is_binary(actor_username) do
-    normalized_username = String.trim(actor_username)
-
-    cond do
-      normalized_username == "" ->
-        {:error, "Option --as requires an admin username."}
-
-      true ->
-        case Accounts.get_user_by_username(normalized_username) do
-          %User{} = actor -> {:ok, actor}
-          nil -> {:error, "Admin actor #{normalized_username} was not found."}
-        end
-    end
+  defp validate_no_args(_argv) do
+    {:error, "Invalid options. Usage: mix users.new"}
   end
 
   defp prompt_username do

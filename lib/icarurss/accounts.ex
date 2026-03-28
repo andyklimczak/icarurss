@@ -169,9 +169,9 @@ defmodule Icarurss.Accounts do
   @doc """
   Creates or updates a user for management workflows.
   """
-  def upsert_managed_user(actor, username, password, role)
+  def upsert_managed_user(actor, username, password, role, opts \\ [])
       when is_binary(username) and is_binary(password) and role in [:admin, :member] do
-    with :ok <- authorize_user_management(actor) do
+    with :ok <- maybe_authorize_user_management(actor, opts) do
       case get_user_by_username(username) do
         nil ->
           with {:ok, user} <-
@@ -194,6 +194,14 @@ defmodule Icarurss.Accounts do
             {:ok, user}
           end
       end
+    end
+  end
+
+  defp maybe_authorize_user_management(actor, opts) do
+    if Keyword.get(opts, :authorize?, true) do
+      authorize_user_management(actor)
+    else
+      :ok
     end
   end
 

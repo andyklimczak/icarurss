@@ -18,7 +18,7 @@ defmodule Mix.Tasks.Users.NewTest do
     :ok
   end
 
-  test "creates a member user in bootstrap mode" do
+  test "creates a member user" do
     send(self(), {:mix_shell_input, :prompt, "bootstrap_member"})
     send(self(), {:mix_shell_input, :prompt, "a very strong password"})
     send(self(), {:mix_shell_input, :prompt, "a very strong password"})
@@ -37,16 +37,7 @@ defmodule Mix.Tasks.Users.NewTest do
            )
   end
 
-  test "updates an existing user role/password when run as admin" do
-    {:ok, admin} =
-      Accounts.register_user_with_password(%{
-        username: "admin_actor",
-        password: "an admin password",
-        password_confirmation: "an admin password"
-      })
-
-    {:ok, _admin} = Accounts.update_user_role(admin, :admin)
-
+  test "updates an existing user role/password" do
     {:ok, target} =
       Accounts.register_user_with_password(%{
         username: "target_user",
@@ -62,7 +53,7 @@ defmodule Mix.Tasks.Users.NewTest do
     send(self(), {:mix_shell_input, :prompt, "admin"})
 
     capture_io(fn ->
-      Mix.Tasks.Users.New.run(["--as", "admin_actor"])
+      Mix.Tasks.Users.New.run([])
     end)
 
     updated_user = Accounts.get_user!(target.id)
@@ -70,23 +61,9 @@ defmodule Mix.Tasks.Users.NewTest do
     assert Accounts.get_user_by_username_and_password("target_user", "new target password")
   end
 
-  test "raises a clear error when non-admin actor attempts user management" do
-    _member_actor =
-      Accounts.register_user_with_password(%{
-        username: "member_actor",
-        password: "a member password",
-        password_confirmation: "a member password"
-      })
-
-    send(self(), {:mix_shell_input, :prompt, "never_used"})
-    send(self(), {:mix_shell_input, :prompt, "never used password"})
-    send(self(), {:mix_shell_input, :prompt, "never used password"})
-    send(self(), {:mix_shell_input, :prompt, ""})
-
-    assert_raise Mix.Error, ~r/Only admin users can manage users/, fn ->
-      capture_io(fn ->
-        Mix.Tasks.Users.New.run(["--as", "member_actor"])
-      end)
+  test "raises a clear error for invalid options" do
+    assert_raise Mix.Error, ~r/Invalid options. Usage: mix users.new/, fn ->
+      Mix.Tasks.Users.New.run(["--as", "member_actor"])
     end
   end
 

@@ -63,6 +63,12 @@ If the container is not already running:
 docker compose run --rm app mix users.new
 ```
 
+To reset a password later:
+
+```bash
+docker compose exec app mix users.reset_password <username>
+```
+
 ### 5. Update later
 
 ```bash
@@ -87,6 +93,13 @@ The SQLite database lives under `./data`.
 mise install
 mise exec -- mix setup
 mise exec -- mix phx.server
+```
+
+Useful local commands:
+
+```bash
+mise exec -- mix users.new
+mise exec -- mix users.reset_password <username>
 ```
 
 Open `http://localhost:4000`.
