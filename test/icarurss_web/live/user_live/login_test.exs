@@ -9,7 +9,6 @@ defmodule IcarurssWeb.UserLive.LoginTest do
       {:ok, _lv, html} = live(conn, ~p"/users/log-in")
 
       assert html =~ "Log in"
-      assert html =~ "Account registration is invite-only"
       assert html =~ "Username"
       assert html =~ "Password"
     end

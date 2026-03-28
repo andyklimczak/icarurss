@@ -21,8 +21,6 @@ defmodule IcarurssWeb.UserLive.Login do
                     class="font-semibold text-brand hover:underline"
                     phx-no-format
                   >Sign up</.link>.
-                <% else %>
-                  Account registration is invite-only.
                 <% end %>
               <% end %>
             </:subtitle>
