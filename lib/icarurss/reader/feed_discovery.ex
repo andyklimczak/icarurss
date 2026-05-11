@@ -9,13 +9,26 @@ defmodule Icarurss.Reader.FeedDiscovery do
 
   @spec discover_from_html(String.t(), String.t()) :: [map()]
   def discover_from_html(html, page_url) when is_binary(html) and is_binary(page_url) do
+    link_attrs =
+      html
+      |> extract_link_tags()
+      |> Enum.map(&parse_link_attributes/1)
+
+    favicon_url = favicon_url_from_link_attrs(link_attrs, page_url)
+
+    link_attrs
+    |> Enum.filter(&feed_link?/1)
+    |> Enum.map(&candidate_from_attrs(&1, page_url, favicon_url))
+    |> Enum.reject(&is_nil/1)
+    |> Enum.uniq_by(& &1.feed_url)
+  end
+
+  @spec favicon_url_from_html(String.t(), String.t()) :: String.t() | nil
+  def favicon_url_from_html(html, page_url) when is_binary(html) and is_binary(page_url) do
     html
     |> extract_link_tags()
     |> Enum.map(&parse_link_attributes/1)
-    |> Enum.filter(&feed_link?/1)
-    |> Enum.map(&candidate_from_attrs(&1, page_url))
-    |> Enum.reject(&is_nil/1)
-    |> Enum.uniq_by(& &1.feed_url)
+    |> favicon_url_from_link_attrs(page_url)
   end
 
   @spec candidate_from_feed_payload(String.t(), map()) :: map()
@@ -52,7 +65,7 @@ defmodule Icarurss.Reader.FeedDiscovery do
     href != "" and String.contains?(rel, "alternate") and Regex.match?(@feed_type_regex, type)
   end
 
-  defp candidate_from_attrs(attrs, page_url) do
+  defp candidate_from_attrs(attrs, page_url, favicon_url) do
     href = Map.get(attrs, "href", "")
     title = attrs |> Map.get("title") |> blank_to_nil()
     resolved_feed_url = resolve_url(href, page_url)
@@ -65,9 +78,28 @@ defmodule Icarurss.Reader.FeedDiscovery do
         title: title,
         site_url: site_url,
         base_url: site_url,
-        favicon_url: favicon_url_for(site_url)
+        favicon_url: favicon_url || favicon_url_for(site_url)
       }
     end
+  end
+
+  defp favicon_url_from_link_attrs(link_attrs, page_url) do
+    Enum.find_value(link_attrs, fn attrs ->
+      rel = attrs |> Map.get("rel", "") |> String.downcase()
+      href = attrs |> Map.get("href", "") |> blank_to_nil()
+
+      if is_binary(href) and favicon_link?(rel) do
+        resolve_url(href, page_url)
+      end
+    end)
+  end
+
+  defp favicon_link?(rel) do
+    rel_parts = String.split(rel)
+
+    "icon" in rel_parts or
+      "shortcut icon" == rel or
+      Enum.any?(rel_parts, &String.ends_with?(&1, "-icon"))
   end
 
   defp resolve_url("", _page_url), do: nil

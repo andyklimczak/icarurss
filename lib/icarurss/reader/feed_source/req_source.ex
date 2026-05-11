@@ -157,7 +157,60 @@ defmodule Icarurss.Reader.FeedSource.ReqSource do
       end)
 
     stop_stream_agent(agent)
-    result
+    enrich_result_favicon(result)
+  end
+
+  defp enrich_result_favicon({:ok, payload, entry_acc, meta}) do
+    {:ok, enrich_payload_favicon(payload), entry_acc, meta}
+  end
+
+  defp enrich_result_favicon(result), do: result
+
+  defp enrich_payload_favicon(%{site_url: site_url} = payload) do
+    favicon_url =
+      fetch_html_favicon(site_url) ||
+        validate_conventional_favicon(payload[:favicon_url], payload[:base_url])
+
+    Map.put(payload, :favicon_url, favicon_url)
+  end
+
+  defp enrich_payload_favicon(payload), do: payload
+
+  defp fetch_html_favicon(nil), do: nil
+
+  defp fetch_html_favicon(site_url) when is_binary(site_url) do
+    with {:ok, response} <- fetch(site_url) do
+      response.body
+      |> to_string()
+      |> FeedDiscovery.favicon_url_from_html(site_url)
+    else
+      _ -> nil
+    end
+  end
+
+  defp validate_conventional_favicon(nil, _base_url), do: nil
+
+  defp validate_conventional_favicon(favicon_url, base_url) when is_binary(favicon_url) do
+    if conventional_favicon?(favicon_url, base_url) do
+      verified_conventional_favicon(favicon_url)
+    else
+      favicon_url
+    end
+  end
+
+  defp conventional_favicon?(favicon_url, base_url)
+       when is_binary(favicon_url) and is_binary(base_url) do
+    favicon_url == base_url <> "/favicon.ico"
+  end
+
+  defp conventional_favicon?(_favicon_url, _base_url), do: false
+
+  defp verified_conventional_favicon(url) do
+    case Req.head(req_options(url)) do
+      {:ok, %Req.Response{status: status}} when status in 200..399 -> url
+      {:ok, %Req.Response{status: status}} when status in [404, 410] -> nil
+      _ -> url
+    end
   end
 
   defp stream_into(agent) do

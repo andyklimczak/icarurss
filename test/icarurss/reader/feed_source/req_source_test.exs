@@ -45,6 +45,64 @@ defmodule Icarurss.Reader.FeedSource.ReqSourceTest do
     assert meta.bytes > 0
   end
 
+  test "enriches direct feed favicons from the feed site html" do
+    rss = """
+    <rss version="2.0">
+      <channel>
+        <title>Site Icon</title>
+        <link>https://example.com</link>
+        <item><guid>one</guid><title>One</title></item>
+      </channel>
+    </rss>
+    """
+
+    html = """
+    <html>
+      <head>
+        <link rel="shortcut icon" href="/assets/site-icon.png" />
+      </head>
+    </html>
+    """
+
+    put_req_plug(fn
+      %{request_path: "/feed.xml"} = conn ->
+        Plug.Conn.send_resp(conn, 200, rss)
+
+      %{request_path: path} = conn when path in [nil, "", "/"] ->
+        Plug.Conn.send_resp(conn, 200, html)
+
+      conn ->
+        Plug.Conn.send_resp(conn, 404, "not found")
+    end)
+
+    assert {:ok, payload, _acc, _meta} = ReqSource.fetch_feed("https://example.com/feed.xml", [])
+    assert payload.favicon_url == "https://example.com/assets/site-icon.png"
+  end
+
+  test "drops the conventional favicon fallback when it is not reachable" do
+    rss = """
+    <rss version="2.0">
+      <channel>
+        <title>No Icon</title>
+        <link>https://example.com</link>
+        <item><guid>one</guid><title>One</title></item>
+      </channel>
+    </rss>
+    """
+
+    html = "<html><head><title>No icon here</title></head></html>"
+
+    put_req_plug(fn
+      %{request_path: "/feed.xml"} = conn -> Plug.Conn.send_resp(conn, 200, rss)
+      %{request_path: "/"} = conn -> Plug.Conn.send_resp(conn, 200, html)
+      %{request_path: "/favicon.ico"} = conn -> Plug.Conn.send_resp(conn, 404, "not found")
+      conn -> Plug.Conn.send_resp(conn, 404, "not found")
+    end)
+
+    assert {:ok, payload, _acc, _meta} = ReqSource.fetch_feed("https://example.com/feed.xml", [])
+    assert payload.favicon_url == nil
+  end
+
   test "returns an error for non-success status" do
     put_req_plug(fn conn -> Plug.Conn.send_resp(conn, 503, "unavailable") end)
 

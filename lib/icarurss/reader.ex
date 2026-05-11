@@ -443,13 +443,37 @@ defmodule Icarurss.Reader do
       title: payload[:title] || feed.title,
       site_url: payload[:site_url] || feed.site_url,
       base_url: payload[:base_url] || feed.base_url,
-      favicon_url: payload[:favicon_url] || feed.favicon_url,
+      favicon_url: favicon_url_from_payload(feed, payload),
       last_fetched_at: DateTime.utc_now(:second),
       last_refresh_error: nil
     }
 
     update_feed(feed, attrs)
   end
+
+  defp favicon_url_from_payload(%Feed{} = feed, payload) do
+    case Map.fetch(payload, :favicon_url) do
+      {:ok, nil} ->
+        if conventional_favicon?(feed.favicon_url, payload[:base_url] || feed.base_url) do
+          nil
+        else
+          feed.favicon_url
+        end
+
+      {:ok, favicon_url} ->
+        favicon_url
+
+      :error ->
+        feed.favicon_url
+    end
+  end
+
+  defp conventional_favicon?(favicon_url, base_url)
+       when is_binary(favicon_url) and is_binary(base_url) do
+    favicon_url == base_url <> "/favicon.ico"
+  end
+
+  defp conventional_favicon?(_favicon_url, _base_url), do: false
 
   defp ingest_entries(feed, entries, fetched_at, initial_mark_read?) do
     Enum.reduce(entries, empty_ingest_stats(), fn entry, acc ->

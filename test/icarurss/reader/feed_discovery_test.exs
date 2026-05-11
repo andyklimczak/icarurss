@@ -34,6 +34,30 @@ defmodule Icarurss.Reader.FeedDiscoveryTest do
       html = "<html><head><title>No Feeds</title></head><body></body></html>"
       assert FeedDiscovery.discover_from_html(html, "https://example.com") == []
     end
+
+    test "uses advertised favicon links for candidates" do
+      html = """
+      <html>
+        <head>
+          <link rel="alternate" type="application/rss+xml" title="Main Feed" href="/feed.xml" />
+          <link rel="shortcut icon" href="/assets/site-icon.png" title="Favicon" />
+        </head>
+      </html>
+      """
+
+      [candidate] = FeedDiscovery.discover_from_html(html, "https://example.com/blog")
+
+      assert candidate.favicon_url == "https://example.com/assets/site-icon.png"
+    end
+  end
+
+  describe "favicon_url_from_html/2" do
+    test "extracts icon links without feed links" do
+      html = ~s|<link rel="apple-touch-icon" href="/touch-icon.png" />|
+
+      assert FeedDiscovery.favicon_url_from_html(html, "https://example.com/articles/1") ==
+               "https://example.com/touch-icon.png"
+    end
   end
 
   describe "candidate_from_feed_payload/2" do
