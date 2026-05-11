@@ -45,39 +45,67 @@ The defaults in `.env.example` are enough to start locally. For a real deploymen
 ### 3. Start the service
 
 ```bash
-docker compose up -d
+docker compose up -d --build
 docker compose logs -f app
 ```
 
-On startup the container installs dependencies, compiles the app, builds assets, and runs migrations automatically.
+The image build installs dependencies, compiles the app, and builds assets. Container startup only
+creates the data directory, runs release-time migrations, and starts Phoenix.
 
 ### 4. Create the first user
 
-```bash
-docker compose exec app mix users.new
+The Docker image now runs as a Phoenix release, so Mix tasks are not available inside the running
+container. For the first user, temporarily set this in `.env`:
+
+```text
+REGISTRATION_ENABLED=true
 ```
 
-If the container is not already running:
+Restart the service, open `http://localhost:4000/users/register`, and create the account:
 
 ```bash
-docker compose run --rm app mix users.new
+docker compose up -d
 ```
 
-To reset a password later:
-
-```bash
-docker compose exec app mix users.reset_password <username>
-```
+For a public deployment, set `REGISTRATION_ENABLED=false` in `.env` after the first account is
+created, then run `docker compose up -d` again.
 
 ### 5. Update later
 
 ```bash
 docker compose down
 git pull
-docker compose up -d
+docker compose up -d --build
 ```
 
 The SQLite database lives under `./data`.
+
+### Maintenance Commands
+
+Because the production container is a release image, run Mix maintenance tasks from a local checkout
+with Elixir installed, pointed at the Compose database:
+
+```bash
+set -a
+. ./.env
+set +a
+DATABASE_PATH="$PWD/data/icarurss_prod.db" MIX_ENV=prod mix users.reset_password <username>
+DATABASE_PATH="$PWD/data/icarurss_prod.db" MIX_ENV=prod mix icarurss.oban.cleanup_stale_feed_jobs
+```
+
+The app also runs scoped stale feed-job cleanup automatically at startup.
+
+### Feed refresh and Oban settings
+
+The Compose file exposes conservative defaults for small hosts:
+
+- `MAX_FEED_BYTES=25000000` (`0` disables the response byte limit)
+- `MAX_ITEMS_PER_FEED=500`
+- `FEED_FETCH_RECEIVE_TIMEOUT_MS=30000`
+- `OBAN_PRUNE_MAX_AGE_SECONDS=21600`
+- `OBAN_PRUNE_LIMIT=500`
+- `SQLITE_BUSY_TIMEOUT_MS=15000`
+- `STALE_FEED_JOB_TIMEOUT_SECONDS=3600`
 
 ## Local Development
 

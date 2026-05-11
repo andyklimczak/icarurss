@@ -29,7 +29,9 @@ config :icarurss,
 config :icarurss, :feed_fetch,
   connect_timeout: 5_000,
   pool_timeout: 5_000,
-  receive_timeout: 10_000,
+  receive_timeout: 30_000,
+  max_bytes: 25_000_000,
+  max_items: 500,
   retry: false
 
 config :icarurss, :feed_refresh,
@@ -44,7 +46,7 @@ config :icarurss, Oban,
      crontab: [
        {"*/10 * * * *", Icarurss.Workers.RefreshAllFeedsWorker}
      ]},
-    {Oban.Plugins.Pruner, max_age: 60 * 60 * 24 * 7}
+    {Oban.Plugins.Pruner, max_age: 60 * 60 * 6, limit: 500}
   ],
   queues: [feed_refresh: 1]
 

@@ -31,4 +31,8 @@ defmodule Icarurss.Reader.FeedSource do
 
   @callback discover(String.t()) :: {:ok, [feed_candidate()]} | {:error, String.t()}
   @callback fetch_feed(String.t()) :: {:ok, feed_payload()} | {:error, String.t()}
+  @callback fetch_feed(String.t(), keyword()) ::
+              {:ok, feed_payload(), term(), map()} | {:error, String.t(), map()}
+
+  @optional_callbacks fetch_feed: 2
 end

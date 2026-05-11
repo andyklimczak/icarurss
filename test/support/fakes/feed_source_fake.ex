@@ -20,4 +20,25 @@ defmodule Icarurss.Reader.FeedSource.Fake do
       _ -> {:error, "No fake fetch response configured"}
     end
   end
+
+  @impl true
+  def fetch_feed(feed_url, opts) do
+    with {:ok, payload} <- fetch_feed(feed_url) do
+      callback = Keyword.get(opts, :on_entry)
+      initial_acc = Keyword.get(opts, :entry_acc)
+      entries = Map.get(payload, :entries, [])
+
+      acc =
+        if is_function(callback, 2) do
+          Enum.reduce(entries, initial_acc, fn entry, acc -> callback.(entry, acc) end)
+        else
+          initial_acc
+        end
+
+      {:ok, %{payload | entries: []}, acc,
+       %{http_status: nil, bytes: nil, parsed_items: length(entries), duration_ms: nil}}
+    else
+      {:error, reason} -> {:error, reason, %{}}
+    end
+  end
 end

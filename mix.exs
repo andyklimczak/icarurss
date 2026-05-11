@@ -53,6 +53,7 @@ defmodule Icarurss.MixProject do
       {:esbuild, "~> 0.10", runtime: Mix.env() == :dev},
       {:tailwind, "~> 0.3", runtime: Mix.env() == :dev},
       {:oban, "~> 2.20"},
+      {:saxy, "~> 1.6"},
       {:html_sanitize_ex, "~> 1.4"},
       {:heroicons,
        github: "tailwindlabs/heroicons",

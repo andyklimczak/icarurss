@@ -69,7 +69,7 @@ if config_env() == :prod do
       For example: /etc/icarurss/data/icarurss_prod.db
       """
 
-  sqlite_busy_timeout = positive_integer_env.("SQLITE_BUSY_TIMEOUT_MS", 5_000)
+  sqlite_busy_timeout = positive_integer_env.("SQLITE_BUSY_TIMEOUT_MS", 15_000)
   pool_size = positive_integer_env.("POOL_SIZE", 5)
   feed_refresh_concurrency = positive_integer_env.("FEED_REFRESH_CONCURRENCY", 1)
   feed_refresh_max_concurrency = positive_integer_env.("FEED_REFRESH_MAX_CONCURRENCY", 1)
@@ -79,8 +79,13 @@ if config_env() == :prod do
 
   feed_fetch_connect_timeout = positive_integer_env.("FEED_FETCH_CONNECT_TIMEOUT_MS", 5_000)
   feed_fetch_pool_timeout = positive_integer_env.("FEED_FETCH_POOL_TIMEOUT_MS", 5_000)
-  feed_fetch_receive_timeout = positive_integer_env.("FEED_FETCH_RECEIVE_TIMEOUT_MS", 10_000)
+  feed_fetch_receive_timeout = positive_integer_env.("FEED_FETCH_RECEIVE_TIMEOUT_MS", 30_000)
   feed_fetch_max_retries = non_negative_integer_env.("FEED_FETCH_MAX_RETRIES", 0)
+  feed_fetch_max_bytes = non_negative_integer_env.("MAX_FEED_BYTES", 25_000_000)
+  feed_fetch_max_items = positive_integer_env.("MAX_ITEMS_PER_FEED", 500)
+  oban_prune_max_age = positive_integer_env.("OBAN_PRUNE_MAX_AGE_SECONDS", 60 * 60 * 6)
+  oban_prune_limit = positive_integer_env.("OBAN_PRUNE_LIMIT", 500)
+  stale_feed_job_timeout = positive_integer_env.("STALE_FEED_JOB_TIMEOUT_SECONDS", 60 * 60)
 
   config :icarurss, Icarurss.Repo,
     database: database_path,
@@ -89,6 +94,8 @@ if config_env() == :prod do
 
   config :icarurss, :feed_fetch,
     connect_timeout: feed_fetch_connect_timeout,
+    max_bytes: feed_fetch_max_bytes,
+    max_items: feed_fetch_max_items,
     max_retries: feed_fetch_max_retries,
     pool_timeout: feed_fetch_pool_timeout,
     receive_timeout: feed_fetch_receive_timeout,
@@ -98,7 +105,17 @@ if config_env() == :prod do
     max_concurrency: feed_refresh_max_concurrency,
     spread_window_seconds: feed_refresh_spread_window_seconds
 
-  config :icarurss, Oban, queues: [feed_refresh: feed_refresh_concurrency]
+  config :icarurss, :oban_maintenance, stale_feed_job_timeout_seconds: stale_feed_job_timeout
+
+  config :icarurss, Oban,
+    plugins: [
+      {Oban.Plugins.Cron,
+       crontab: [
+         {"*/10 * * * *", Icarurss.Workers.RefreshAllFeedsWorker}
+       ]},
+      {Oban.Plugins.Pruner, max_age: oban_prune_max_age, limit: oban_prune_limit}
+    ],
+    queues: [feed_refresh: feed_refresh_concurrency]
 
   # The secret key base is used to sign/encrypt cookies and other secrets.
   # A default value is used in config/dev.exs and config/test.exs but you

@@ -1,8 +1,6 @@
 defmodule Icarurss.Reader.FeedParserTest do
   use ExUnit.Case, async: true
 
-  import ExUnit.CaptureLog
-
   alias Icarurss.Reader.FeedParser
 
   describe "parse/2" do
@@ -199,8 +197,67 @@ defmodule Icarurss.Reader.FeedParserTest do
         "<?xml version=\"1.0\"?><rss version=\"2.0\"><channel><title>Bad" <>
           <<1>> <> "</title></channel></rss>"
 
-      log = capture_log(fn -> assert {:error, _reason} = FeedParser.parse(invalid_xml) end)
-      assert log =~ "fatal"
+      assert {:error, reason} = FeedParser.parse(invalid_xml)
+      assert reason =~ "Could not parse feed XML"
+    end
+
+    test "parses chunked RSS streams" do
+      chunks = [
+        ~s|<?xml version="1.0"?><rss version="2.0"><channel><title>Chunked</title>|,
+        ~s|<link>https://example.com</link><item><guid>chunk-1</guid>|,
+        ~s|<title>Chunked One</title><link>/one</link></item></channel></rss>|
+      ]
+
+      assert {:ok, payload} =
+               FeedParser.parse_stream(chunks, feed_url: "https://example.com/feed.xml")
+
+      assert payload.title == "Chunked"
+      assert [entry] = payload.entries
+      assert entry.guid == "chunk-1"
+      assert entry.url == "https://example.com/one"
+    end
+
+    test "parses many generated items without requiring a full XML tree" do
+      items =
+        for index <- 1..1_000 do
+          "<item><guid>#{index}</guid><title>Post #{index}</title><link>/posts/#{index}</link></item>"
+        end
+
+      chunks =
+        [
+          ~s|<rss version="2.0"><channel><title>Large</title><link>https://example.com</link>|
+          | items
+        ] ++ ["</channel></rss>"]
+
+      assert {:ok, payload} =
+               FeedParser.parse_stream(chunks, feed_url: "https://example.com/feed.xml")
+
+      assert length(payload.entries) == 1_000
+      assert hd(payload.entries).guid == "1"
+    end
+
+    test "calls entry callback and omits accumulated entries" do
+      rss = """
+      <rss version="2.0">
+        <channel>
+          <title>Callback</title>
+          <link>https://example.com</link>
+          <item><guid>one</guid><title>One</title></item>
+          <item><guid>two</guid><title>Two</title></item>
+        </channel>
+      </rss>
+      """
+
+      callback = fn entry, acc -> [entry.guid | acc] end
+
+      assert {:ok, payload} =
+               FeedParser.parse_stream([rss],
+                 feed_url: "https://example.com/feed.xml",
+                 on_entry: callback,
+                 entry_acc: []
+               )
+
+      assert payload.entries == []
     end
   end
 end

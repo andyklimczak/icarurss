@@ -219,8 +219,48 @@ defmodule Icarurss.Reader do
 
   def refresh_feed(%Feed{} = feed, opts \\ []) do
     initial_mark_read? = Keyword.get(opts, :initial_mark_read, false)
+    source_module = feed_source_module()
 
-    case feed_source_module().fetch_feed(feed.feed_url) do
+    if function_exported?(source_module, :fetch_feed, 2) do
+      refresh_feed_streaming(source_module, feed, initial_mark_read?)
+    else
+      refresh_feed_compat(source_module, feed, initial_mark_read?)
+    end
+  end
+
+  defp refresh_feed_streaming(source_module, %Feed{} = feed, initial_mark_read?) do
+    fetched_at = DateTime.utc_now(:second)
+
+    entry_callback = fn entry, stats ->
+      ingest_entry(feed, entry, fetched_at, initial_mark_read?, stats)
+    end
+
+    case source_module.fetch_feed(feed.feed_url,
+           feed_id: feed.id,
+           on_entry: entry_callback,
+           entry_acc: empty_ingest_stats()
+         ) do
+      {:ok, payload, stats, meta} ->
+        with {:ok, updated_feed} <- update_feed_from_payload(feed, payload) do
+          log_refresh_success(updated_feed, stats, meta)
+          maybe_broadcast_feed_refresh(updated_feed, stats)
+          {:ok, stats}
+        end
+
+      {:error, reason, meta} ->
+        log_refresh_error(feed, reason, meta)
+        emit_refresh_error(feed, reason)
+        {:error, reason}
+
+      {:error, reason} ->
+        log_refresh_error(feed, reason, %{})
+        emit_refresh_error(feed, reason)
+        {:error, reason}
+    end
+  end
+
+  defp refresh_feed_compat(source_module, %Feed{} = feed, initial_mark_read?) do
+    case source_module.fetch_feed(feed.feed_url) do
       {:ok, payload} ->
         with {:ok, updated_feed} <- update_feed_from_payload(feed, payload) do
           fetched_at = DateTime.utc_now(:second)
@@ -412,28 +452,34 @@ defmodule Icarurss.Reader do
   end
 
   defp ingest_entries(feed, entries, fetched_at, initial_mark_read?) do
-    Enum.reduce(entries, %{inserted: 0, updated: 0, skipped: 0}, fn entry, acc ->
-      attrs = normalized_article_attrs(entry, fetched_at)
-
-      case find_existing_article(feed.user_id, feed.id, attrs.guid, attrs.url) do
-        nil ->
-          case create_article(
-                 %User{id: feed.user_id},
-                 feed,
-                 Map.put(attrs, :is_read, initial_mark_read?)
-               ) do
-            {:ok, _article} -> %{acc | inserted: acc.inserted + 1}
-            {:error, _changeset} -> %{acc | skipped: acc.skipped + 1}
-          end
-
-        %Article{} = existing_article ->
-          case update_article(existing_article, attrs) do
-            {:ok, _article} -> %{acc | updated: acc.updated + 1}
-            {:error, _changeset} -> %{acc | skipped: acc.skipped + 1}
-          end
-      end
+    Enum.reduce(entries, empty_ingest_stats(), fn entry, acc ->
+      ingest_entry(feed, entry, fetched_at, initial_mark_read?, acc)
     end)
   end
+
+  defp ingest_entry(feed, entry, fetched_at, initial_mark_read?, acc) do
+    attrs = normalized_article_attrs(entry, fetched_at)
+
+    case find_existing_article(feed.user_id, feed.id, attrs.guid, attrs.url) do
+      nil ->
+        case create_article(
+               %User{id: feed.user_id},
+               feed,
+               Map.put(attrs, :is_read, initial_mark_read?)
+             ) do
+          {:ok, _article} -> %{acc | inserted: acc.inserted + 1}
+          {:error, _changeset} -> %{acc | skipped: acc.skipped + 1}
+        end
+
+      %Article{} = existing_article ->
+        case update_article(existing_article, attrs) do
+          {:ok, _article} -> %{acc | updated: acc.updated + 1}
+          {:error, _changeset} -> %{acc | skipped: acc.skipped + 1}
+        end
+    end
+  end
+
+  defp empty_ingest_stats, do: %{inserted: 0, updated: 0, skipped: 0}
 
   defp normalized_article_attrs(entry, fetched_at) do
     title = map_value(entry, :title) || "(untitled)"
@@ -672,6 +718,21 @@ defmodule Icarurss.Reader do
        }}
     )
   end
+
+  defp log_refresh_success(feed, stats, meta) do
+    Logger.info(
+      "Feed refresh succeeded feed_id=#{feed.id} url=#{feed.feed_url} status=#{meta_value(meta, :http_status)} bytes=#{meta_value(meta, :bytes)} parsed_items=#{meta_value(meta, :parsed_items)} inserted=#{stats.inserted} updated=#{stats.updated} skipped=#{stats.skipped} duration_ms=#{meta_value(meta, :duration_ms)} reason=#{inspect(meta_value(meta, :halted_reason))}"
+    )
+  end
+
+  defp log_refresh_error(feed, reason, meta) do
+    Logger.warning(
+      "Feed refresh failed feed_id=#{feed.id} url=#{feed.feed_url} status=#{meta_value(meta, :http_status)} bytes=#{meta_value(meta, :bytes)} parsed_items=#{meta_value(meta, :parsed_items)} duration_ms=#{meta_value(meta, :duration_ms)} reason=#{format_refresh_error_reason(reason)}"
+    )
+  end
+
+  defp meta_value(meta, key) when is_map(meta), do: Map.get(meta, key)
+  defp meta_value(_meta, _key), do: nil
 
   defp broadcast_articles_read(user_id) do
     Phoenix.PubSub.broadcast(
