@@ -35,6 +35,7 @@ RUN apt-get update && \
 WORKDIR /app
 
 ENV MIX_ENV=prod \
+    LANG=C.UTF-8 \
     PHX_SERVER=true \
     PORT=4000 \
     DATABASE_PATH=/data/icarurss_prod.db
