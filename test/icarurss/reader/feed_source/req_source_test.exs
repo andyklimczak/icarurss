@@ -152,6 +152,90 @@ defmodule Icarurss.Reader.FeedSource.ReqSourceTest do
     assert payload.title == "Recovered Feed"
   end
 
+  test "retries with a buffered fetch when streaming parsing fails on UTF-8 CDATA" do
+    rss =
+      ~s|<rss version="2.0"><channel><title>Fallback</title><link>https://example.com</link>| <>
+        ~s|<item><guid>one</guid><title>One</title><description><![CDATA[가나다라마바사]]></description></item>| <>
+        ~s|</channel></rss>|
+
+    cdata_start = :binary.match(rss, "<![CDATA[") |> elem(0)
+    split_at = cdata_start + byte_size("<![CDATA[") + 1
+
+    chunks = [
+      binary_part(rss, 0, split_at),
+      binary_part(rss, split_at, byte_size(rss) - split_at)
+    ]
+
+    plug = fn
+      %{method: "HEAD"} = conn, _opts ->
+        Plug.Conn.send_resp(conn, 200, "")
+
+      conn, _opts ->
+        conn = Plug.Conn.put_resp_content_type(conn, "text/xml") |> Plug.Conn.send_chunked(200)
+
+        Enum.reduce(chunks, conn, fn chunk, conn ->
+          {:ok, conn} = Plug.Conn.chunk(conn, chunk)
+          conn
+        end)
+    end
+
+    url = start_bandit_server!(plug)
+    put_feed_fetch_config(stream_chunk_bytes: split_at)
+
+    callback = fn entry, acc -> [entry.summary_html | acc] end
+
+    assert {:ok, payload, acc, meta} =
+             ReqSource.fetch_feed(url,
+               on_entry: callback,
+               entry_acc: []
+             )
+
+    assert payload.title == "Fallback"
+    assert payload.entries == []
+    assert acc == ["가나다라마바사"]
+    assert Map.get(meta, :buffered_fallback?) == true
+    assert meta.parsed_items == 1
+  end
+
+  test "resolves redirects before streaming the feed body" do
+    rss = """
+    <rss version="2.0">
+      <channel>
+        <title>Redirected</title>
+        <link>https://example.com</link>
+        <item><guid>one</guid><title>One</title></item>
+      </channel>
+    </rss>
+    """
+
+    put_req_plug(fn
+      %{method: "HEAD", request_path: "/feed.xml"} = conn ->
+        conn
+        |> Plug.Conn.put_resp_header("location", "/actual.xml")
+        |> Plug.Conn.send_resp(302, "")
+
+      %{method: "HEAD", request_path: "/actual.xml"} = conn ->
+        Plug.Conn.send_resp(conn, 200, "")
+
+      %{request_path: "/feed.xml"} = conn ->
+        conn
+        |> Plug.Conn.put_resp_header("location", "/actual.xml")
+        |> Plug.Conn.send_resp(302, "<html><body>redirecting</body></html>")
+
+      %{request_path: "/actual.xml"} = conn ->
+        Plug.Conn.send_resp(conn, 200, rss)
+
+      conn ->
+        Plug.Conn.send_resp(conn, 404, "not found")
+    end)
+
+    assert {:ok, payload, _acc, meta} = ReqSource.fetch_feed("https://example.com/feed.xml", [])
+    assert payload.title == "Redirected"
+    assert meta.final_url == "https://example.com/actual.xml"
+    assert meta.redirect_count == 1
+    refute Map.get(meta, :buffered_fallback?)
+  end
+
   test "classifies obvious HTML success bodies as non-feed without a parser retry path" do
     html = "<!doctype html><html><body>not a feed</body></html>"
     put_req_plug(fn conn -> Plug.Conn.send_resp(conn, 200, html) end)
@@ -227,14 +311,25 @@ defmodule Icarurss.Reader.FeedSource.ReqSourceTest do
   end
 
   defp put_req_plug(plug) do
-    Application.put_env(:icarurss, :feed_fetch,
+    put_feed_fetch_config(req_options: [plug: plug])
+  end
+
+  defp put_feed_fetch_config(extra) do
+    base = [
       connect_timeout: 5_000,
       pool_timeout: 5_000,
       receive_timeout: 30_000,
       max_bytes: 25_000_000,
       max_items: 500,
-      retry: false,
-      req_options: [plug: plug]
-    )
+      retry: false
+    ]
+
+    Application.put_env(:icarurss, :feed_fetch, Keyword.merge(base, extra))
+  end
+
+  defp start_bandit_server!(plug) do
+    pid = start_supervised!({Bandit, plug: plug, port: 0})
+    {:ok, {_address, port}} = ThousandIsland.listener_info(pid)
+    "http://127.0.0.1:#{port}/feed.xml"
   end
 end

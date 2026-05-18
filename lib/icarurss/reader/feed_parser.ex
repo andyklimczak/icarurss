@@ -75,15 +75,23 @@ defmodule Icarurss.Reader.FeedParser do
 
   @spec parse_stream(Enumerable.t(), keyword()) :: {:ok, map()} | {:error, String.t()}
   def parse_stream(chunks, opts \\ []) do
+    case parse_stream_with_state(chunks, opts) do
+      {:ok, payload, _state} -> {:ok, payload}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  @doc false
+  def parse_stream_with_state(chunks, opts \\ []) do
     initial_state = SaxyHandler.initial_state(opts)
     saxy_opts = [character_data_max_length: Keyword.get(opts, :character_data_max_length, 65_536)]
 
     case Saxy.parse_stream(chunks, SaxyHandler, initial_state, saxy_opts) do
       {:ok, state} ->
-        payload_from_state(state)
+        payload_with_state(state)
 
       {:halt, state, _rest} ->
-        payload_from_state(state)
+        payload_with_state(state)
 
       {:error, error} ->
         {:error, "Could not parse feed XML: #{Exception.message(error)}"}
@@ -94,6 +102,13 @@ defmodule Icarurss.Reader.FeedParser do
 
     _error ->
       {:error, "Could not parse feed XML"}
+  end
+
+  defp payload_with_state(state) do
+    case payload_from_state(state) do
+      {:ok, payload} -> {:ok, payload, state}
+      {:error, reason} -> {:error, reason}
+    end
   end
 
   @doc false

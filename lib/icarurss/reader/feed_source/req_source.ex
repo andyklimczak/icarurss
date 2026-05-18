@@ -44,9 +44,12 @@ defmodule Icarurss.Reader.FeedSource.ReqSource do
   @impl true
   def fetch_feed(feed_url, opts) when is_binary(feed_url) and is_list(opts) do
     with {:ok, normalized_url} <- normalize_url(feed_url),
-         {:ok, agent} <- start_stream_agent(normalized_url, opts),
-         {:ok, request, response} <- fetch_stream(normalized_url, agent) do
-      finalize_stream_response(request, response, agent)
+         {stream_url, redirect_meta} <- resolve_stream_url(normalized_url),
+         {:ok, agent} <- start_stream_agent(stream_url, opts, redirect_meta),
+         {:ok, request, response} <- fetch_stream(stream_url, agent) do
+      request
+      |> finalize_stream_response(response, agent)
+      |> maybe_fetch_buffered_fallback(stream_url, opts)
     else
       {:error, reason, meta} -> {:error, reason, meta}
       {:error, reason} -> {:error, reason, %{}}
@@ -87,7 +90,84 @@ defmodule Icarurss.Reader.FeedSource.ReqSource do
     end
   end
 
-  defp start_stream_agent(url, opts) do
+  defp resolve_stream_url(url) do
+    fetch_config = Application.get_env(:icarurss, :feed_fetch, [])
+    max_redirects = Keyword.get(fetch_config, :max_redirects, 10)
+
+    case resolve_redirects(url, max_redirects, 0) do
+      {:ok, final_url, redirect_count} ->
+        {final_url, %{redirect_count: redirect_count}}
+
+      :error ->
+        {url, %{redirect_count: 0}}
+    end
+  end
+
+  defp resolve_redirects(url, redirects_left, redirect_count) when redirects_left <= 0 do
+    {:ok, url, redirect_count}
+  end
+
+  defp resolve_redirects(url, redirects_left, redirect_count) do
+    case request_redirect_response(url, :head) do
+      {:ok, status, location} when status in 300..399 and is_binary(location) ->
+        url
+        |> resolve_location(location)
+        |> resolve_redirects(redirects_left - 1, redirect_count + 1)
+
+      {:ok, status, _location} when status in 300..399 ->
+        {:ok, url, redirect_count}
+
+      {:ok, status, _location} when status in [405, 501] ->
+        resolve_redirects_with_get(url, redirects_left, redirect_count)
+
+      {:ok, _status, _location} ->
+        {:ok, url, redirect_count}
+
+      :error ->
+        :error
+    end
+  end
+
+  defp resolve_redirects_with_get(url, redirects_left, redirect_count) do
+    case request_redirect_response(url, :get) do
+      {:ok, status, location} when status in 300..399 and is_binary(location) ->
+        url
+        |> resolve_location(location)
+        |> resolve_redirects(redirects_left - 1, redirect_count + 1)
+
+      {:ok, _status, _location} ->
+        {:ok, url, redirect_count}
+
+      :error ->
+        :error
+    end
+  end
+
+  defp request_redirect_response(url, method) do
+    options =
+      url
+      |> req_options()
+      |> Keyword.merge(method: method, redirect: false)
+
+    case Req.run(options) do
+      {%Req.Request{}, %Req.Response{status: status} = response} ->
+        {:ok, status, response_header(response, "location")}
+
+      _ ->
+        :error
+    end
+  rescue
+    _error -> :error
+  end
+
+  defp resolve_location(url, location) do
+    url
+    |> URI.parse()
+    |> URI.merge(location)
+    |> URI.to_string()
+  end
+
+  defp start_stream_agent(url, opts, redirect_meta) do
     fetch_config = Application.get_env(:icarurss, :feed_fetch, [])
 
     parser_opts = [
@@ -121,6 +201,7 @@ defmodule Icarurss.Reader.FeedSource.ReqSource do
             content_type: nil,
             content_length: nil,
             final_url: url,
+            redirect_count: Map.get(redirect_meta, :redirect_count, 0),
             started_at: System.monotonic_time()
           }
         end)
@@ -199,6 +280,180 @@ defmodule Icarurss.Reader.FeedSource.ReqSource do
     enrich_result_favicon(result)
   end
 
+  defp maybe_fetch_buffered_fallback({:error, %RefreshError{} = error, meta} = result, url, opts) do
+    if buffered_fallback_allowed?(error, meta, opts) do
+      fetch_feed_buffered(url, opts, error, meta)
+    else
+      result
+    end
+  end
+
+  defp maybe_fetch_buffered_fallback(result, _url, _opts), do: result
+
+  defp buffered_fallback_allowed?(%RefreshError{kind: :parse}, meta, opts) do
+    fetch_config = Application.get_env(:icarurss, :feed_fetch, [])
+
+    Keyword.get(opts, :buffered_fallback, Keyword.get(fetch_config, :buffered_fallback, true)) and
+      Map.get(meta, :halted_reason) == :parse_error and
+      Map.get(meta, :parsed_items, 0) == 0 and
+      plausible_feed_xml?(meta)
+  end
+
+  defp buffered_fallback_allowed?(_error, _meta, _opts), do: false
+
+  defp plausible_feed_xml?(meta) do
+    content_type = meta |> Map.get(:content_type) |> to_string() |> String.downcase()
+    preview = meta |> Map.get(:preview_start) |> to_string() |> String.trim_leading()
+
+    String.contains?(content_type, "xml") or
+      String.starts_with?(preview, "<?xml") or
+      String.starts_with?(preview, "<rss") or
+      String.starts_with?(preview, "<feed") or
+      String.starts_with?(preview, "<rdf:RDF")
+  end
+
+  defp fetch_feed_buffered(url, opts, original_error, original_meta) do
+    started_at = System.monotonic_time()
+
+    case Req.run(req_options(url)) do
+      {%Req.Request{} = request, %Req.Response{status: status} = response}
+      when status in 200..299 ->
+        body = response.body |> to_string()
+        bytes = byte_size(body)
+        max_bytes = max_response_bytes(opts)
+
+        if max_bytes_exceeded?(bytes, max_bytes) do
+          meta = buffered_meta(request, response, body, started_at, original_meta)
+
+          {:error,
+           RefreshError.new(
+             :too_large,
+             "Feed response exceeded max size of #{max_bytes} bytes",
+             retryable?: false,
+             permanent?: true,
+             meta: Map.put(meta, :halted_reason, :too_large)
+           ), Map.put(meta, :halted_reason, :too_large)}
+        else
+          parse_buffered_body(
+            body,
+            request,
+            response,
+            started_at,
+            opts,
+            original_error,
+            original_meta
+          )
+        end
+
+      {%Req.Request{} = request, %Req.Response{status: status} = response} ->
+        meta = buffered_meta(request, response, "", started_at, original_meta)
+
+        {:error,
+         RefreshError.new(:http_status, "Request failed with status #{status}",
+           retryable?: status in [408, 429, 500, 502, 503, 504],
+           permanent?: status not in [408, 429, 500, 502, 503, 504],
+           meta: meta
+         ), meta}
+
+      {%Req.Request{} = request, error} ->
+        meta =
+          original_meta
+          |> Map.put(:final_url, request_url(request))
+          |> Map.put(:buffered_fallback?, true)
+          |> Map.put(:buffered_fallback_error, Exception.message(error))
+
+        {:error,
+         RefreshError.new(:request, "Request error: #{Exception.message(error)}",
+           retryable?: true,
+           permanent?: false,
+           meta: meta
+         ), meta}
+    end
+  rescue
+    error ->
+      meta =
+        original_meta
+        |> Map.put(:buffered_fallback?, true)
+        |> Map.put(:buffered_fallback_error, Exception.message(error))
+
+      {:error, RefreshError.from(original_error, meta), meta}
+  end
+
+  defp parse_buffered_body(
+         body,
+         request,
+         response,
+         started_at,
+         opts,
+         original_error,
+         original_meta
+       ) do
+    case FeedParser.parse_stream_with_state([body], parser_opts(request_url(request), opts)) do
+      {:ok, payload, final_state} ->
+        meta =
+          request
+          |> buffered_meta(response, body, started_at, original_meta)
+          |> Map.put(:parsed_items, final_state.entry_count)
+          |> Map.put(:partial_halt?, false)
+          |> Map.put(:halted_reason, nil)
+
+        {:ok, payload, final_state.entry_acc, meta}
+        |> enrich_result_favicon()
+
+      {:error, reason} ->
+        meta =
+          request
+          |> buffered_meta(response, body, started_at, original_meta)
+          |> Map.put(:buffered_fallback_error, reason)
+
+        {:error, RefreshError.from(original_error, meta), meta}
+    end
+  end
+
+  defp parser_opts(url, opts) do
+    fetch_config = Application.get_env(:icarurss, :feed_fetch, [])
+
+    [
+      feed_url: url,
+      max_items: Keyword.get(opts, :max_items, Keyword.get(fetch_config, :max_items, 500)),
+      on_entry: Keyword.get(opts, :on_entry),
+      entry_acc: Keyword.get(opts, :entry_acc),
+      character_data_max_length: Keyword.get(fetch_config, :character_data_max_length, 65_536)
+    ]
+  end
+
+  defp buffered_meta(request, response, body, started_at, original_meta) do
+    bytes = byte_size(body)
+
+    original_meta
+    |> Map.merge(%{
+      http_status: response.status,
+      bytes: bytes,
+      bytes_consumed: bytes,
+      content_type: response_header(response, "content-type"),
+      content_length: response_content_length(response),
+      full_content_length: response_content_length(response),
+      final_url: request_url(request),
+      preview_start: FeedParser.escaped_preview(body),
+      preview_current: FeedParser.escaped_preview(body),
+      duration_ms:
+        System.convert_time_unit(
+          System.monotonic_time() - started_at,
+          :native,
+          :millisecond
+        ),
+      buffered_fallback?: true
+    })
+    |> Map.put(:stream_error, format_fallback_stream_error(original_meta))
+  end
+
+  defp format_fallback_stream_error(meta) do
+    case Map.get(meta, :halted_reason) do
+      nil -> nil
+      reason -> inspect(reason)
+    end
+  end
+
   defp enrich_result_favicon({:ok, payload, entry_acc, meta}) do
     {:ok, enrich_payload_favicon(payload), entry_acc, meta}
   end
@@ -256,10 +511,45 @@ defmodule Icarurss.Reader.FeedSource.ReqSource do
     fn {:data, data}, {req, resp} ->
       update_response_meta(agent, req, resp)
 
-      case parse_stream_chunk(agent, data) do
+      case parse_stream_data(agent, data) do
         :cont -> {:cont, {req, resp}}
         :halt -> {:halt, {req, resp}}
       end
+    end
+  end
+
+  defp parse_stream_data(agent, data) do
+    data
+    |> stream_data_chunks()
+    |> Enum.reduce_while(:cont, fn chunk, :cont ->
+      case parse_stream_chunk(agent, chunk) do
+        :cont -> {:cont, :cont}
+        :halt -> {:halt, :halt}
+      end
+    end)
+  end
+
+  defp stream_data_chunks(data) do
+    fetch_config = Application.get_env(:icarurss, :feed_fetch, [])
+
+    case Keyword.get(fetch_config, :stream_chunk_bytes) do
+      size when is_integer(size) and size > 0 ->
+        chunks = for <<chunk::binary-size(size) <- data>>, do: chunk
+        append_stream_remainder(chunks, data, size)
+
+      _ ->
+        [data]
+    end
+  end
+
+  defp append_stream_remainder(chunks, data, size) do
+    remainder_size = rem(byte_size(data), size)
+
+    if remainder_size == 0 do
+      chunks
+    else
+      offset = byte_size(data) - remainder_size
+      chunks ++ [binary_part(data, offset, remainder_size)]
     end
   end
 
@@ -365,6 +655,11 @@ defmodule Icarurss.Reader.FeedSource.ReqSource do
   defp max_bytes_exceeded?(_bytes, max_bytes) when max_bytes in [nil, 0], do: false
   defp max_bytes_exceeded?(bytes, max_bytes), do: bytes > max_bytes
 
+  defp max_response_bytes(opts) do
+    fetch_config = Application.get_env(:icarurss, :feed_fetch, [])
+    Keyword.get(opts, :max_bytes, Keyword.get(fetch_config, :max_bytes, 25_000_000))
+  end
+
   defp stream_meta(state, status), do: stream_meta(state, status, state.final_state)
 
   defp stream_meta(state, status, final_state) do
@@ -377,6 +672,7 @@ defmodule Icarurss.Reader.FeedSource.ReqSource do
       content_length: state.content_length,
       full_content_length: state.content_length,
       final_url: state.final_url,
+      redirect_count: state.redirect_count,
       partial_halt?: not is_nil(state.error) or state.halted?,
       preview_start: state.preview_start,
       preview_current: state.preview_current,
