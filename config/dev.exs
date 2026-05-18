@@ -3,6 +3,7 @@ import Config
 # Configure your database
 config :icarurss, Icarurss.Repo,
   database: Path.expand("../data/icarurss_dev.db", __DIR__),
+  default_transaction_mode: :immediate,
   pool_size: 5,
   stacktrace: true,
   show_sensitive_data_on_connection_error: true

@@ -217,6 +217,30 @@ defmodule Icarurss.Reader.FeedParserTest do
       assert entry.url == "https://example.com/one"
     end
 
+    test "parses CDATA split across chunks" do
+      chunks = [
+        ~s|<rss version="2.0"><channel><title>Split</title><item><guid>one</guid><title>One</title><description><![CDATA[<p>hel|,
+        ~s|lo</p>]]></description></item></channel></rss>|
+      ]
+
+      assert {:ok, payload} =
+               FeedParser.parse_stream(chunks, feed_url: "https://example.com/feed.xml")
+
+      assert [entry] = payload.entries
+      assert entry.summary_html == "<p>hello</p>"
+    end
+
+    test "stream normalizer strips illegal XML control bytes" do
+      state = FeedParser.new_stream_normalizer_state()
+
+      data =
+        <<0xEF, 0xBB, 0xBF>> <> "<rss version=\"2.0\"><channel><title>Bad" <> <<1>> <> "</title>"
+
+      assert {:cont, normalized, _state} = FeedParser.normalize_stream_chunk(data, state)
+      assert normalized =~ "<rss"
+      refute normalized =~ <<1>>
+    end
+
     test "parses many generated items without requiring a full XML tree" do
       items =
         for index <- 1..1_000 do

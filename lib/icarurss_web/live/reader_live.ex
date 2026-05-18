@@ -261,7 +261,9 @@ defmodule IcarurssWeb.ReaderLive do
                     >
                       <.icon name="hero-exclamation-triangle" class="size-4 shrink-0 text-red-600" />
                     </span>
-                    <span class="truncate">{feed.title || feed.feed_url}</span>
+                    <span id={"sidebar-feed-title-#{feed.id}"} class={feed_title_class(feed)}>
+                      {feed.title || feed.feed_url}
+                    </span>
                   </span>
                   <span class="flex items-center gap-2">
                     <span
@@ -400,7 +402,9 @@ defmodule IcarurssWeb.ReaderLive do
                               class="size-4 shrink-0 text-red-600"
                             />
                           </span>
-                          <span class="truncate">{feed.title || feed.feed_url}</span>
+                          <span id={"sidebar-feed-title-#{feed.id}"} class={feed_title_class(feed)}>
+                            {feed.title || feed.feed_url}
+                          </span>
                         </span>
                         <span class="flex items-center gap-2">
                           <span
@@ -1562,6 +1566,21 @@ defmodule IcarurssWeb.ReaderLive do
         "text-base-content hover:bg-base-200 hover:text-base-content"
     ]
   end
+
+  defp feed_title_class(feed) do
+    [
+      "truncate",
+      feed_error?(feed) && "text-red-700"
+    ]
+  end
+
+  defp feed_error?(feed) do
+    present?(Map.get(feed, :last_refresh_error)) or
+      Map.get(feed, :refresh_status) in ["transient_error", "permanent_error"]
+  end
+
+  defp present?(value) when is_binary(value), do: String.trim(value) != ""
+  defp present?(_value), do: false
 
   defp feed_placeholder_label(feed) do
     label_source =

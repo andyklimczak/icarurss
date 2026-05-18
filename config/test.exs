@@ -11,6 +11,7 @@ config :bcrypt_elixir, :log_rounds, 1
 config :icarurss, Icarurss.Repo,
   database: Path.expand("../data/icarurss_test.db", __DIR__),
   busy_timeout: 5_000,
+  default_transaction_mode: :immediate,
   pool_size: 5,
   pool: Ecto.Adapters.SQL.Sandbox
 

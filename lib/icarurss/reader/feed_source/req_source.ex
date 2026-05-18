@@ -5,7 +5,7 @@ defmodule Icarurss.Reader.FeedSource.ReqSource do
 
   @behaviour Icarurss.Reader.FeedSource
 
-  alias Icarurss.Reader.{FeedDiscovery, FeedParser}
+  alias Icarurss.Reader.{FeedDiscovery, FeedParser, RefreshError}
 
   @user_agent "icarurss/0.1 (+self-hosted)"
 
@@ -45,8 +45,8 @@ defmodule Icarurss.Reader.FeedSource.ReqSource do
   def fetch_feed(feed_url, opts) when is_binary(feed_url) and is_list(opts) do
     with {:ok, normalized_url} <- normalize_url(feed_url),
          {:ok, agent} <- start_stream_agent(normalized_url, opts),
-         {:ok, response} <- fetch_stream(normalized_url, agent) do
-      finalize_stream_response(response, agent)
+         {:ok, request, response} <- fetch_stream(normalized_url, agent) do
+      finalize_stream_response(request, response, agent)
     else
       {:error, reason, meta} -> {:error, reason, meta}
       {:error, reason} -> {:error, reason, %{}}
@@ -67,14 +67,23 @@ defmodule Icarurss.Reader.FeedSource.ReqSource do
   end
 
   defp fetch_stream(url, agent) do
-    case Req.get(req_options(url, agent)) do
-      {:ok, %Req.Response{} = response} ->
-        {:ok, response}
+    case Req.run(req_options(url, agent)) do
+      {%Req.Request{} = request, %Req.Response{} = response} ->
+        {:ok, request, response}
 
-      {:error, error} ->
-        meta = agent_meta(agent)
+      {%Req.Request{} = request, error} ->
+        meta =
+          agent_meta(agent)
+          |> Map.put(:final_url, request_url(request))
+
         stop_stream_agent(agent)
-        {:error, "Request error: #{Exception.message(error)}", meta}
+
+        {:error,
+         RefreshError.new(:request, "Request error: #{Exception.message(error)}",
+           retryable?: true,
+           permanent?: false,
+           meta: meta
+         ), meta}
     end
   end
 
@@ -105,6 +114,13 @@ defmodule Icarurss.Reader.FeedSource.ReqSource do
             halted?: false,
             halted_reason: nil,
             final_state: nil,
+            normalizer: FeedParser.new_stream_normalizer_state(),
+            preview_start: "",
+            preview_current: "",
+            http_status: nil,
+            content_type: nil,
+            content_length: nil,
+            final_url: url,
             started_at: System.monotonic_time()
           }
         end)
@@ -114,18 +130,30 @@ defmodule Icarurss.Reader.FeedSource.ReqSource do
     end
   end
 
-  defp finalize_stream_response(%Req.Response{status: status}, agent)
+  defp finalize_stream_response(request, %Req.Response{status: status} = response, agent)
        when status not in 200..299 do
-    meta = agent_meta(agent) |> Map.put(:http_status, status)
+    meta =
+      agent_meta(agent)
+      |> put_response_meta(request, response)
+
     stop_stream_agent(agent)
-    {:error, "Request failed with status #{status}", meta}
+
+    {:error,
+     RefreshError.new(:http_status, "Request failed with status #{status}",
+       retryable?: status in [408, 429, 500, 502, 503, 504],
+       permanent?: status not in [408, 429, 500, 502, 503, 504],
+       meta: meta
+     ), meta}
   end
 
-  defp finalize_stream_response(%Req.Response{status: status}, agent) do
+  defp finalize_stream_response(request, %Req.Response{status: status} = response, agent) do
+    Agent.update(agent, &put_response_meta(&1, request, response))
+
     result =
       Agent.get_and_update(agent, fn
         %{error: error} = state when not is_nil(error) ->
-          {{:error, error, stream_meta(state, status)}, state}
+          meta = stream_meta(state, status)
+          {{:error, RefreshError.from(error, meta), meta}, state}
 
         %{halted?: true, final_state: final_state} = state ->
           case FeedParser.payload_from_state(final_state) do
@@ -134,7 +162,9 @@ defmodule Icarurss.Reader.FeedSource.ReqSource do
                state}
 
             {:error, reason} ->
-              {{:error, reason, stream_meta(state, status, final_state)}, state}
+              meta = stream_meta(state, status, final_state)
+              error = RefreshError.from(reason, meta)
+              {{:error, error, meta}, state}
           end
 
         %{partial: partial} = state ->
@@ -146,13 +176,22 @@ defmodule Icarurss.Reader.FeedSource.ReqSource do
                    %{state | final_state: final_state}}
 
                 {:error, reason} ->
-                  {{:error, reason, stream_meta(state, status, final_state)},
-                   %{state | final_state: final_state}}
+                  meta = stream_meta(state, status, final_state)
+                  error = RefreshError.from(reason, meta)
+                  {{:error, error, meta}, %{state | final_state: final_state}}
               end
 
             {:error, error} ->
-              {{:error, "Could not parse feed XML: #{Exception.message(error)}",
-                stream_meta(state, status)}, state}
+              meta = stream_meta(state, status)
+
+              refresh_error =
+                RefreshError.new(:parse, "Could not parse feed XML: #{Exception.message(error)}",
+                  retryable?: false,
+                  permanent?: true,
+                  meta: meta
+                )
+
+              {{:error, refresh_error, meta}, state}
           end
       end)
 
@@ -215,6 +254,8 @@ defmodule Icarurss.Reader.FeedSource.ReqSource do
 
   defp stream_into(agent) do
     fn {:data, data}, {req, resp} ->
+      update_response_meta(agent, req, resp)
+
       case parse_stream_chunk(agent, data) do
         :cont -> {:cont, {req, resp}}
         :halt -> {:halt, {req, resp}}
@@ -236,39 +277,89 @@ defmodule Icarurss.Reader.FeedSource.ReqSource do
         cond do
           max_bytes_exceeded?(bytes, state.max_bytes) ->
             reason = "Feed response exceeded max size of #{state.max_bytes} bytes"
-            {:halt, %{state | bytes: bytes, error: reason, halted?: true}}
+
+            error =
+              RefreshError.new(:too_large, reason,
+                retryable?: false,
+                permanent?: true,
+                meta: %{halted_reason: :too_large}
+              )
+
+            {:halt,
+             %{state | bytes: bytes, error: error, halted?: true, halted_reason: :too_large}}
 
           true ->
-            case Saxy.Partial.parse(state.partial, data) do
-              {:cont, partial} ->
-                {:cont, %{state | partial: partial, bytes: bytes}}
+            case FeedParser.normalize_stream_chunk(data, state.normalizer) do
+              {:cont, "", normalizer} ->
+                {:cont, %{state | normalizer: normalizer, bytes: bytes}}
 
-              {:halt, final_state} ->
+              {:cont, normalized_data, normalizer} ->
+                parse_normalized_stream_chunk(
+                  %{state | normalizer: normalizer},
+                  normalized_data,
+                  bytes
+                )
+
+              {:error, %RefreshError{} = error, normalizer} ->
                 {:halt,
                  %{
                    state
-                   | bytes: bytes,
+                   | normalizer: normalizer,
+                     bytes: bytes,
+                     error: error,
                      halted?: true,
-                     halted_reason: final_state.halted_reason,
-                     final_state: final_state
+                     halted_reason: error.meta[:halted_reason] || :non_feed,
+                     preview_start: error.meta[:preview_start] || state.preview_start
                  }}
-
-              {:halt, final_state, _rest} ->
-                {:halt,
-                 %{
-                   state
-                   | bytes: bytes,
-                     halted?: true,
-                     halted_reason: final_state.halted_reason,
-                     final_state: final_state
-                 }}
-
-              {:error, error} ->
-                reason = "Could not parse feed XML: #{Exception.message(error)}"
-                {:halt, %{state | bytes: bytes, error: reason, halted?: true}}
             end
         end
     end)
+  end
+
+  defp parse_normalized_stream_chunk(state, data, bytes) do
+    preview_current = FeedParser.escaped_preview(data)
+
+    state =
+      state
+      |> Map.put(:bytes, bytes)
+      |> Map.put(:preview_current, preview_current)
+      |> Map.update(:preview_start, preview_current, fn
+        "" -> preview_current
+        existing -> existing
+      end)
+
+    case Saxy.Partial.parse(state.partial, data) do
+      {:cont, partial} ->
+        {:cont, %{state | partial: partial}}
+
+      {:halt, final_state} ->
+        halt_with_final_state(state, final_state)
+
+      {:halt, final_state, _rest} ->
+        halt_with_final_state(state, final_state)
+
+      {:error, error} ->
+        reason = "Could not parse feed XML: #{Exception.message(error)}"
+
+        refresh_error =
+          RefreshError.new(:parse, reason,
+            retryable?: false,
+            permanent?: true,
+            meta: %{halted_reason: :parse_error, preview_current: preview_current}
+          )
+
+        {:halt, %{state | error: refresh_error, halted?: true, halted_reason: :parse_error}}
+    end
+  end
+
+  defp halt_with_final_state(state, final_state) do
+    {:halt,
+     %{
+       state
+       | halted?: true,
+         halted_reason: final_state.halted_reason,
+         final_state: final_state
+     }}
   end
 
   defp max_bytes_exceeded?(_bytes, max_bytes) when max_bytes in [nil, 0], do: false
@@ -280,7 +371,15 @@ defmodule Icarurss.Reader.FeedSource.ReqSource do
     %{
       http_status: status,
       bytes: state.bytes,
+      bytes_consumed: state.bytes,
       parsed_items: parsed_items(final_state),
+      content_type: state.content_type,
+      content_length: state.content_length,
+      full_content_length: state.content_length,
+      final_url: state.final_url,
+      partial_halt?: not is_nil(state.error) or state.halted?,
+      preview_start: state.preview_start,
+      preview_current: state.preview_current,
       duration_ms:
         System.convert_time_unit(
           System.monotonic_time() - state.started_at,
@@ -293,6 +392,45 @@ defmodule Icarurss.Reader.FeedSource.ReqSource do
 
   defp parsed_items(%{entry_count: entry_count}), do: entry_count
   defp parsed_items(_state), do: 0
+
+  defp update_response_meta(agent, request, response) do
+    Agent.update(agent, &put_response_meta(&1, request, response))
+  catch
+    :exit, _ -> :ok
+  end
+
+  defp put_response_meta(state, request, response) when is_map(state) do
+    state
+    |> Map.put(:http_status, response.status)
+    |> Map.put(:content_type, response_header(response, "content-type"))
+    |> Map.put(:content_length, response_content_length(response))
+    |> Map.put(:final_url, request_url(request))
+  end
+
+  defp response_header(response, name) do
+    response
+    |> Req.Response.get_header(name)
+    |> List.first()
+  end
+
+  defp response_content_length(response) do
+    response
+    |> response_header("content-length")
+    |> case do
+      nil ->
+        nil
+
+      value ->
+        case Integer.parse(value) do
+          {integer, ""} -> integer
+          _ -> nil
+        end
+    end
+  end
+
+  defp request_url(%Req.Request{url: %URI{} = uri}), do: URI.to_string(uri)
+  defp request_url(%Req.Request{url: url}) when is_binary(url), do: url
+  defp request_url(_request), do: nil
 
   defp agent_meta(agent) do
     Agent.get(agent, &stream_meta(&1, nil))

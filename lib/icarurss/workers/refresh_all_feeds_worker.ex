@@ -38,7 +38,7 @@ defmodule Icarurss.Workers.RefreshAllFeedsWorker do
   end
 
   defp schedule_feed_refreshes(max_count) do
-    feed_ids = Reader.list_all_feed_ids(limit: max_count)
+    feed_ids = Reader.list_refreshable_feed_ids(limit: max_count)
 
     case feed_ids do
       [] ->
@@ -49,22 +49,29 @@ defmodule Icarurss.Workers.RefreshAllFeedsWorker do
           Application.get_env(:icarurss, :feed_refresh, [])
           |> Keyword.get(:spread_window_seconds, 600)
 
-        multi =
-          feed_ids
-          |> Enum.with_index()
-          |> Enum.reduce(Multi.new(), fn {feed_id, index}, multi ->
-            schedule_in = stagger_seconds(index, length(feed_ids), spread_window_seconds)
+        chunk_size =
+          Application.get_env(:icarurss, :feed_refresh, [])
+          |> Keyword.get(:schedule_chunk_size, 25)
 
-            changeset =
-              RefreshFeedWorker.new(%{feed_id: feed_id}, schedule_in: schedule_in)
+        feed_ids
+        |> Enum.with_index()
+        |> Enum.chunk_every(chunk_size)
+        |> Enum.reduce_while(:ok, fn chunk, :ok ->
+          multi =
+            Enum.reduce(chunk, Multi.new(), fn {feed_id, index}, multi ->
+              schedule_in = stagger_seconds(index, length(feed_ids), spread_window_seconds)
 
-            Oban.insert(multi, {:refresh_feed, feed_id}, changeset)
-          end)
+              changeset =
+                RefreshFeedWorker.new(%{feed_id: feed_id}, schedule_in: schedule_in)
 
-        case Repo.transaction(multi) do
-          {:ok, _result} -> :ok
-          {:error, _operation, reason, _changes_so_far} -> {:error, reason}
-        end
+              Oban.insert(multi, {:refresh_feed, feed_id}, changeset)
+            end)
+
+          case Repo.transaction(multi) do
+            {:ok, _result} -> {:cont, :ok}
+            {:error, _operation, reason, _changes_so_far} -> {:halt, {:error, reason}}
+          end
+        end)
     end
   end
 

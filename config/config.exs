@@ -36,17 +36,19 @@ config :icarurss, :feed_fetch,
 
 config :icarurss, :feed_refresh,
   max_concurrency: 1,
-  spread_window_seconds: 600
+  spread_window_seconds: 600,
+  schedule_chunk_size: 25
 
 config :icarurss, Oban,
   repo: Icarurss.Repo,
   engine: Oban.Engines.Lite,
+  stage_interval: 5_000,
   plugins: [
     {Oban.Plugins.Cron,
      crontab: [
        {"*/10 * * * *", Icarurss.Workers.RefreshAllFeedsWorker}
      ]},
-    {Oban.Plugins.Pruner, max_age: 60 * 60 * 6, limit: 500}
+    {Oban.Plugins.Pruner, max_age: 60 * 60 * 6, limit: 100, interval: 300_000}
   ],
   queues: [feed_refresh: 1]
 

@@ -7,9 +7,66 @@ defmodule Icarurss.Reader.FeedParser do
   """
 
   alias Icarurss.Reader.FeedParser.SaxyHandler
+  alias Icarurss.Reader.RefreshError
 
   @type entry_acc :: term()
   @type entry_callback :: (map(), entry_acc() -> entry_acc())
+  @type normalizer_state :: %{started?: boolean(), pending: binary(), preview: binary()}
+
+  @doc false
+  def new_stream_normalizer_state do
+    %{started?: false, pending: "", preview: ""}
+  end
+
+  @doc false
+  def normalize_stream_chunk(data, %{started?: false, pending: pending} = state)
+      when is_binary(data) do
+    buffer =
+      pending
+      |> Kernel.<>(data)
+      |> strip_leading_bom()
+      |> strip_invalid_xml_controls()
+
+    preview = preview(buffer)
+
+    cond do
+      obvious_non_feed?(buffer) ->
+        {:error, non_feed_error(preview), %{state | pending: "", preview: preview}}
+
+      xml_start = xml_start_position(buffer) ->
+        normalized =
+          buffer
+          |> binary_part(xml_start, byte_size(buffer) - xml_start)
+          |> remove_extra_xml_declarations(:keep_leading)
+
+        {:cont, normalized, %{state | started?: true, pending: "", preview: preview}}
+
+      byte_size(buffer) >= 1024 ->
+        {:error, non_feed_error(preview), %{state | pending: "", preview: preview}}
+
+      true ->
+        {:cont, "", %{state | pending: buffer, preview: preview}}
+    end
+  end
+
+  def normalize_stream_chunk(data, %{started?: true} = state) when is_binary(data) do
+    normalized =
+      data
+      |> strip_invalid_xml_controls()
+      |> remove_extra_xml_declarations(:drop_all)
+
+    {:cont, normalized, %{state | preview: preview(state.preview <> data)}}
+  end
+
+  @doc false
+  def escaped_preview(value) when is_binary(value) do
+    value
+    |> String.replace("\\", "\\\\")
+    |> String.replace("\n", "\\n")
+    |> String.replace("\r", "\\r")
+    |> String.replace("\t", "\\t")
+    |> String.slice(0, 240)
+  end
 
   @spec parse(binary(), keyword()) :: {:ok, map()} | {:error, String.t()}
   def parse(xml_body, opts \\ []) when is_binary(xml_body) do
@@ -107,6 +164,61 @@ defmodule Icarurss.Reader.FeedParser do
   end
 
   defp valid_root?(root_name), do: root_name in ["rss", "feed", "RDF"]
+
+  defp strip_leading_bom(<<0xEF, 0xBB, 0xBF, rest::binary>>), do: rest
+  defp strip_leading_bom(binary), do: binary
+
+  defp strip_invalid_xml_controls(binary) do
+    binary
+    |> :binary.bin_to_list()
+    |> Enum.reject(&invalid_xml_control?/1)
+    |> :binary.list_to_bin()
+  end
+
+  defp invalid_xml_control?(byte) do
+    byte in 0x00..0x08 or byte in [0x0B, 0x0C] or byte in 0x0E..0x1F
+  end
+
+  defp xml_start_position(buffer) do
+    ["<?xml", "<rss", "<feed", "<rdf:RDF", "<RDF"]
+    |> Enum.map(&:binary.match(buffer, &1))
+    |> Enum.filter(&match?({_, _}, &1))
+    |> Enum.map(fn {position, _length} -> position end)
+    |> Enum.min(fn -> nil end)
+  end
+
+  defp obvious_non_feed?(buffer) do
+    trimmed = String.trim_leading(buffer)
+    downcased = String.downcase(binary_part(trimmed, 0, min(byte_size(trimmed), 80)))
+
+    String.starts_with?(downcased, "<!doctype html") or
+      String.starts_with?(downcased, "<html") or
+      (byte_size(buffer) >= 64 and not String.contains?(buffer, "<"))
+  end
+
+  defp non_feed_error(preview) do
+    RefreshError.new(:non_feed, "This URL does not appear to be a valid RSS/Atom feed",
+      meta: %{preview_start: escaped_preview(preview), halted_reason: :non_feed}
+    )
+  end
+
+  defp remove_extra_xml_declarations(binary, :keep_leading) do
+    case Regex.run(~r/\A<\?xml\s+[^?]*\?>/i, binary, return: :index) do
+      [{0, length}] ->
+        declaration = binary_part(binary, 0, length)
+        rest = binary_part(binary, length, byte_size(binary) - length)
+        declaration <> remove_extra_xml_declarations(rest, :drop_all)
+
+      _ ->
+        remove_extra_xml_declarations(binary, :drop_all)
+    end
+  end
+
+  defp remove_extra_xml_declarations(binary, :drop_all) do
+    Regex.replace(~r/<\?xml\s+[^?]*\?>/i, binary, "")
+  end
+
+  defp preview(binary), do: binary_part(binary, 0, min(byte_size(binary), 240))
 
   defp feed_site_url(feed, feed_url) do
     first_alternate_link(feed, feed_url) ||

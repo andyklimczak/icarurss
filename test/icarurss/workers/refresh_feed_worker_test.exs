@@ -6,6 +6,7 @@ defmodule Icarurss.Workers.RefreshFeedWorkerTest do
   import Icarurss.ReaderFixtures
 
   alias Icarurss.Reader
+  alias Icarurss.Reader.RefreshError
   alias Icarurss.Workers.RefreshFeedWorker
 
   setup do
@@ -54,8 +55,37 @@ defmodule Icarurss.Workers.RefreshFeedWorkerTest do
 
     Application.put_env(:icarurss, :feed_source_fake_fetch_feed, {:error, "upstream timeout"})
 
-    assert {:error, "upstream timeout"} = perform_job(RefreshFeedWorker, %{feed_id: feed.id})
-    assert Reader.get_feed(feed.id).last_refresh_error == "upstream timeout"
+    assert {:error, %RefreshError{kind: :request, retryable?: true, message: "upstream timeout"}} =
+             perform_job(RefreshFeedWorker, %{feed_id: feed.id})
+
+    refreshed_feed = Reader.get_feed(feed.id)
+    assert refreshed_feed.last_refresh_error == "upstream timeout"
+    assert refreshed_feed.refresh_status == "transient_error"
+    assert refreshed_feed.refresh_error_kind == "request"
+    assert refreshed_feed.refresh_failure_count == 1
+    assert %DateTime{} = refreshed_feed.next_refresh_after
+  end
+
+  test "perform/1 cancels permanent feed failures" do
+    user = user_fixture()
+    feed = feed_fixture(user, %{feed_url: "https://feeds.example.com/main.xml"})
+
+    Application.put_env(
+      :icarurss,
+      :feed_source_fake_fetch_feed,
+      {:error,
+       RefreshError.new(:non_feed, "This URL does not appear to be a valid RSS/Atom feed",
+         retryable?: false,
+         permanent?: true
+       )}
+    )
+
+    assert {:cancel, %RefreshError{kind: :non_feed, retryable?: false}} =
+             perform_job(RefreshFeedWorker, %{feed_id: feed.id})
+
+    refreshed_feed = Reader.get_feed(feed.id)
+    assert refreshed_feed.refresh_status == "permanent_error"
+    assert refreshed_feed.refresh_error_kind == "non_feed"
   end
 
   test "perform/1 clears persisted refresh errors after a successful retry" do
@@ -85,6 +115,10 @@ defmodule Icarurss.Workers.RefreshFeedWorkerTest do
     )
 
     assert :ok = perform_job(RefreshFeedWorker, %{feed_id: feed.id})
-    assert is_nil(Reader.get_feed(feed.id).last_refresh_error)
+    refreshed_feed = Reader.get_feed(feed.id)
+    assert is_nil(refreshed_feed.last_refresh_error)
+    assert refreshed_feed.refresh_status == "ok"
+    assert refreshed_feed.refresh_failure_count == 0
+    assert is_nil(refreshed_feed.next_refresh_after)
   end
 end

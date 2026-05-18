@@ -272,6 +272,26 @@ defmodule IcarurssWeb.ReaderLiveTest do
              )
     end
 
+    test "grouped feeds with refresh errors render red feed titles", %{conn: conn} do
+      user = user_fixture()
+      folder = folder_fixture(user, %{name: "Tech"})
+
+      feed =
+        feed_fixture(user, %{
+          folder_id: folder.id,
+          title: "Broken Feed",
+          last_refresh_error: "parse failed"
+        })
+
+      {:ok, view, _html} =
+        conn
+        |> log_in_user(user)
+        |> live(~p"/")
+
+      assert has_element?(view, "#sidebar-feed-error-#{feed.id}")
+      assert has_element?(view, "#sidebar-feed-title-#{feed.id}.text-red-700", "Broken Feed")
+    end
+
     test "sidebar updates when a background refresh fails", %{conn: conn} do
       user = user_fixture()
       feed = feed_fixture(user)

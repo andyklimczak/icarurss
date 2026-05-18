@@ -75,6 +75,23 @@ defmodule IcarurssWeb.Telemetry do
           "The time the connection spent waiting before being checked out for the query"
       ),
 
+      # Feed refresh metrics
+      summary("icarurss.reader.feed_refresh.stop.duration",
+        unit: {:native, :millisecond},
+        tags: [:result, :kind]
+      ),
+      sum("icarurss.reader.feed_refresh.items.count", tags: [:result]),
+      sum("icarurss.reader.feed_refresh.error.count", tags: [:kind, :retryable?]),
+
+      # Oban metrics
+      summary("oban.job.stop.duration",
+        unit: {:native, :millisecond},
+        tags: [:worker, :queue, :state]
+      ),
+      sum("oban.job.exception.duration", tags: [:worker, :queue, :state]),
+      summary("oban.plugin.stop.duration", unit: {:native, :millisecond}, tags: [:plugin]),
+      sum("oban.plugin.exception.duration", tags: [:plugin]),
+
       # VM Metrics
       summary("vm.memory.total", unit: {:byte, :kilobyte}),
       summary("vm.total_run_queue_lengths.total"),

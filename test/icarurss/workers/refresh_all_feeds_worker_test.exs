@@ -15,7 +15,12 @@ defmodule Icarurss.Workers.RefreshAllFeedsWorkerTest do
     original_refresh = Application.get_env(:icarurss, :feed_refresh, [])
 
     Application.put_env(:icarurss, :feed_source, Icarurss.Reader.FeedSource.Fake)
-    Application.put_env(:icarurss, :feed_refresh, max_concurrency: 1, spread_window_seconds: 30)
+
+    Application.put_env(:icarurss, :feed_refresh,
+      max_concurrency: 1,
+      schedule_chunk_size: 2,
+      spread_window_seconds: 30
+    )
 
     on_exit(fn ->
       Application.put_env(:icarurss, :feed_source, original_source)
@@ -47,6 +52,23 @@ defmodule Icarurss.Workers.RefreshAllFeedsWorkerTest do
     assert DateTime.compare(second.scheduled_at, first.scheduled_at) == :gt
     assert DateTime.compare(third.scheduled_at, second.scheduled_at) == :gt
     assert DateTime.diff(third.scheduled_at, first.scheduled_at, :second) <= 30
+  end
+
+  test "perform/1 skips feeds deferred by refresh health backoff" do
+    user = user_fixture()
+
+    feed_a = feed_fixture(user, %{feed_url: "https://feeds.example.com/a.xml"})
+
+    _feed_b =
+      feed_fixture(user, %{
+        feed_url: "https://feeds.example.com/b.xml",
+        next_refresh_after: DateTime.add(DateTime.utc_now(:second), 1, :hour)
+      })
+
+    assert :ok = perform_job(RefreshAllFeedsWorker, %{})
+
+    assert [job] = all_enqueued(worker: RefreshFeedWorker, queue: :feed_refresh)
+    assert job.args["feed_id"] == feed_a.id
   end
 
   test "perform/1 refreshes feeds directly when spread is disabled" do

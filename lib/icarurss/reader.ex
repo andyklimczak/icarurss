@@ -7,7 +7,7 @@ defmodule Icarurss.Reader do
   require Logger
 
   alias Icarurss.Accounts.User
-  alias Icarurss.Reader.{Article, Feed, Folder, HtmlSanitizer, Opml, Setting}
+  alias Icarurss.Reader.{Article, Feed, Folder, HtmlSanitizer, Opml, RefreshError, Setting}
   alias Icarurss.Repo
   alias Icarurss.Workers.RefreshFeedWorker
 
@@ -115,6 +115,19 @@ defmodule Icarurss.Reader do
     )
   end
 
+  def list_refreshable_feed_ids(opts \\ []) do
+    limit = Keyword.get(opts, :limit, 5_000)
+    now = DateTime.utc_now(:second)
+
+    Repo.all(
+      from feed in Feed,
+        where: is_nil(feed.next_refresh_after) or feed.next_refresh_after <= ^now,
+        order_by: [asc: feed.id],
+        select: feed.id,
+        limit: ^limit
+    )
+  end
+
   def get_feed(feed_id) when is_integer(feed_id), do: Repo.get(Feed, feed_id)
 
   def list_ungrouped_feeds(%User{id: user_id}) do
@@ -212,8 +225,21 @@ defmodule Icarurss.Reader do
     initial_mark_read? = Keyword.get(opts, :initial_mark_read, false)
     max_concurrency = Keyword.get(opts, :max_concurrency, feed_refresh_max_concurrency())
     limit = Keyword.get(opts, :limit, 5_000)
+    force? = Keyword.get(opts, :force, false)
 
-    Repo.all(from(feed in Feed, order_by: [asc: feed.id], limit: ^limit))
+    refreshable_query =
+      if force? do
+        from(feed in Feed, order_by: [asc: feed.id], limit: ^limit)
+      else
+        now = DateTime.utc_now(:second)
+
+        from feed in Feed,
+          where: is_nil(feed.next_refresh_after) or feed.next_refresh_after <= ^now,
+          order_by: [asc: feed.id],
+          limit: ^limit
+      end
+
+    Repo.all(refreshable_query)
     |> refresh_feeds(initial_mark_read?, max_concurrency)
   end
 
@@ -221,10 +247,14 @@ defmodule Icarurss.Reader do
     initial_mark_read? = Keyword.get(opts, :initial_mark_read, false)
     source_module = feed_source_module()
 
-    if function_exported?(source_module, :fetch_feed, 2) do
-      refresh_feed_streaming(source_module, feed, initial_mark_read?)
+    if not Keyword.get(opts, :force, false) and refresh_deferred?(feed) do
+      {:ok, empty_ingest_stats()}
     else
-      refresh_feed_compat(source_module, feed, initial_mark_read?)
+      if function_exported?(source_module, :fetch_feed, 2) do
+        refresh_feed_streaming(source_module, feed, initial_mark_read?)
+      else
+        refresh_feed_compat(source_module, feed, initial_mark_read?)
+      end
     end
   end
 
@@ -243,19 +273,22 @@ defmodule Icarurss.Reader do
       {:ok, payload, stats, meta} ->
         with {:ok, updated_feed} <- update_feed_from_payload(feed, payload) do
           log_refresh_success(updated_feed, stats, meta)
+          emit_refresh_success(updated_feed, stats, meta)
           maybe_broadcast_feed_refresh(updated_feed, stats)
           {:ok, stats}
         end
 
       {:error, reason, meta} ->
-        log_refresh_error(feed, reason, meta)
-        emit_refresh_error(feed, reason)
-        {:error, reason}
+        error = RefreshError.from(reason, meta)
+        log_refresh_error(feed, error, meta)
+        emit_refresh_error(feed, error)
+        {:error, error}
 
       {:error, reason} ->
-        log_refresh_error(feed, reason, %{})
-        emit_refresh_error(feed, reason)
-        {:error, reason}
+        error = RefreshError.from(reason, %{})
+        log_refresh_error(feed, error, %{})
+        emit_refresh_error(feed, error)
+        {:error, error}
     end
   end
 
@@ -272,11 +305,14 @@ defmodule Icarurss.Reader do
           {:ok, stats}
         end
 
-      {:error, reason} = error ->
-        emit_refresh_error(feed, reason)
-        error
+      {:error, reason} ->
+        classified_error = RefreshError.from(reason, %{})
+        emit_refresh_error(feed, classified_error)
+        {:error, classified_error}
     end
   end
+
+  def refresh_error_retryable?(reason), do: RefreshError.retryable?(reason)
 
   ## OPML APIs
 
@@ -445,7 +481,12 @@ defmodule Icarurss.Reader do
       base_url: payload[:base_url] || feed.base_url,
       favicon_url: favicon_url_from_payload(feed, payload),
       last_fetched_at: DateTime.utc_now(:second),
-      last_refresh_error: nil
+      last_refresh_error: nil,
+      refresh_status: "ok",
+      refresh_error_kind: nil,
+      refresh_failure_count: 0,
+      last_refresh_failed_at: nil,
+      next_refresh_after: nil
     }
 
     update_feed(feed, attrs)
@@ -751,7 +792,23 @@ defmodule Icarurss.Reader do
 
   defp log_refresh_error(feed, reason, meta) do
     Logger.warning(
-      "Feed refresh failed feed_id=#{feed.id} url=#{feed.feed_url} status=#{meta_value(meta, :http_status)} bytes=#{meta_value(meta, :bytes)} parsed_items=#{meta_value(meta, :parsed_items)} duration_ms=#{meta_value(meta, :duration_ms)} reason=#{format_refresh_error_reason(reason)}"
+      "Feed refresh failed feed_id=#{feed.id} url=#{feed.feed_url} final_url=#{meta_value(meta, :final_url)} status=#{meta_value(meta, :http_status)} content_type=#{inspect(meta_value(meta, :content_type))} content_length=#{meta_value(meta, :content_length)} bytes=#{meta_value(meta, :bytes)} parsed_items=#{meta_value(meta, :parsed_items)} halted_reason=#{inspect(meta_value(meta, :halted_reason))} partial_halt=#{meta_value(meta, :partial_halt?)} duration_ms=#{meta_value(meta, :duration_ms)} preview_start=#{inspect(meta_value(meta, :preview_start))} preview_current=#{inspect(meta_value(meta, :preview_current))} reason=#{format_refresh_error_reason(reason)}"
+    )
+  end
+
+  defp emit_refresh_success(feed, stats, meta) do
+    duration_ms = meta_value(meta, :duration_ms) || 0
+
+    :telemetry.execute(
+      [:icarurss, :reader, :feed_refresh, :stop],
+      %{duration: System.convert_time_unit(duration_ms, :millisecond, :native)},
+      %{feed_id: feed.id, user_id: feed.user_id, result: :ok, kind: :ok}
+    )
+
+    :telemetry.execute(
+      [:icarurss, :reader, :feed_refresh, :items],
+      %{count: stats.inserted + stats.updated + stats.skipped},
+      %{feed_id: feed.id, user_id: feed.user_id, result: :ok}
     )
   end
 
@@ -768,8 +825,18 @@ defmodule Icarurss.Reader do
 
   defp emit_refresh_error(feed, reason) do
     error_message = format_refresh_error_reason(reason)
+    error_kind = refresh_error_kind(reason)
+    failure_count = (feed.refresh_failure_count || 0) + 1
+    status = if RefreshError.retryable?(reason), do: "transient_error", else: "permanent_error"
 
-    case update_feed(feed, %{last_refresh_error: error_message}) do
+    case update_feed(feed, %{
+           last_refresh_error: error_message,
+           refresh_status: status,
+           refresh_error_kind: error_kind,
+           refresh_failure_count: failure_count,
+           last_refresh_failed_at: DateTime.utc_now(:second),
+           next_refresh_after: next_refresh_after(reason, failure_count)
+         }) do
       {:ok, updated_feed} ->
         Phoenix.PubSub.broadcast(
           Icarurss.PubSub,
@@ -791,12 +858,43 @@ defmodule Icarurss.Reader do
     :telemetry.execute(
       [:icarurss, :reader, :feed_refresh, :error],
       %{count: 1},
-      %{feed_id: feed.id, user_id: feed.user_id, reason: error_message}
+      %{
+        feed_id: feed.id,
+        user_id: feed.user_id,
+        reason: error_message,
+        kind: error_kind,
+        retryable?: RefreshError.retryable?(reason)
+      }
     )
+
+    :telemetry.execute(
+      [:icarurss, :reader, :feed_refresh, :stop],
+      %{duration: 0},
+      %{feed_id: feed.id, user_id: feed.user_id, result: :error, kind: error_kind}
+    )
+  end
+
+  defp refresh_error_kind(%RefreshError{kind: kind}), do: Atom.to_string(kind)
+  defp refresh_error_kind(_reason), do: "request"
+
+  defp next_refresh_after(reason, failure_count) do
+    seconds =
+      if RefreshError.retryable?(reason) do
+        min(:math.pow(2, failure_count) |> trunc(), 60) * 60
+      else
+        min(:math.pow(2, max(failure_count - 1, 0)) |> trunc(), 7) * 24 * 60 * 60
+      end
+
+    DateTime.add(DateTime.utc_now(:second), seconds, :second)
   end
 
   defp format_refresh_error_reason(reason) when is_binary(reason) do
     String.slice(reason, 0, 500)
+  end
+
+  defp format_refresh_error_reason(%RefreshError{} = reason) do
+    reason.message
+    |> String.slice(0, 500)
   end
 
   defp format_refresh_error_reason(reason) do
@@ -828,6 +926,12 @@ defmodule Icarurss.Reader do
 
   defp feed_source_module do
     Application.get_env(:icarurss, :feed_source, Icarurss.Reader.FeedSource.ReqSource)
+  end
+
+  defp refresh_deferred?(%Feed{next_refresh_after: nil}), do: false
+
+  defp refresh_deferred?(%Feed{next_refresh_after: next_refresh_after}) do
+    DateTime.compare(next_refresh_after, DateTime.utc_now(:second)) == :gt
   end
 
   defp normalize_folder_id_for_user(_user, nil), do: nil

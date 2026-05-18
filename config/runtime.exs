@@ -73,6 +73,7 @@ if config_env() == :prod do
   pool_size = positive_integer_env.("POOL_SIZE", 5)
   feed_refresh_concurrency = positive_integer_env.("FEED_REFRESH_CONCURRENCY", 1)
   feed_refresh_max_concurrency = positive_integer_env.("FEED_REFRESH_MAX_CONCURRENCY", 1)
+  feed_refresh_schedule_chunk_size = positive_integer_env.("FEED_REFRESH_SCHEDULE_CHUNK_SIZE", 25)
 
   feed_refresh_spread_window_seconds =
     non_negative_integer_env.("FEED_REFRESH_SPREAD_WINDOW_SECONDS", 600)
@@ -84,12 +85,15 @@ if config_env() == :prod do
   feed_fetch_max_bytes = non_negative_integer_env.("MAX_FEED_BYTES", 25_000_000)
   feed_fetch_max_items = positive_integer_env.("MAX_ITEMS_PER_FEED", 500)
   oban_prune_max_age = positive_integer_env.("OBAN_PRUNE_MAX_AGE_SECONDS", 60 * 60 * 6)
-  oban_prune_limit = positive_integer_env.("OBAN_PRUNE_LIMIT", 500)
+  oban_prune_limit = positive_integer_env.("OBAN_PRUNE_LIMIT", 100)
+  oban_prune_interval = positive_integer_env.("OBAN_PRUNE_INTERVAL_MS", 300_000)
+  oban_stage_interval = positive_integer_env.("OBAN_STAGE_INTERVAL_MS", 5_000)
   stale_feed_job_timeout = positive_integer_env.("STALE_FEED_JOB_TIMEOUT_SECONDS", 60 * 60)
 
   config :icarurss, Icarurss.Repo,
     database: database_path,
     busy_timeout: sqlite_busy_timeout,
+    default_transaction_mode: :immediate,
     pool_size: pool_size
 
   config :icarurss, :feed_fetch,
@@ -103,17 +107,20 @@ if config_env() == :prod do
 
   config :icarurss, :feed_refresh,
     max_concurrency: feed_refresh_max_concurrency,
+    schedule_chunk_size: feed_refresh_schedule_chunk_size,
     spread_window_seconds: feed_refresh_spread_window_seconds
 
   config :icarurss, :oban_maintenance, stale_feed_job_timeout_seconds: stale_feed_job_timeout
 
   config :icarurss, Oban,
+    stage_interval: oban_stage_interval,
     plugins: [
       {Oban.Plugins.Cron,
        crontab: [
          {"*/10 * * * *", Icarurss.Workers.RefreshAllFeedsWorker}
        ]},
-      {Oban.Plugins.Pruner, max_age: oban_prune_max_age, limit: oban_prune_limit}
+      {Oban.Plugins.Pruner,
+       max_age: oban_prune_max_age, limit: oban_prune_limit, interval: oban_prune_interval}
     ],
     queues: [feed_refresh: feed_refresh_concurrency]
 
